@@ -1,0 +1,20 @@
+# .NET
+**/bin/
+**/obj/
+**/.vs/
+*.user
+*.suo
+appsettings.Development.json
+**/secrets.json
+
+# Angular
+**/node_modules/
+**/dist/
+.angular/
+
+# Capacitor / OS
+android/
+ios/
+.DS_Store
+Thumbs.db
+*.log
