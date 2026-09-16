@@ -1,0 +1,6 @@
+@if (!network.online()) {
+  <div class="offline-banner" role="status">
+    You are offline. Some actions may fail until connection returns.
+  </div>
+}
+<router-outlet />
