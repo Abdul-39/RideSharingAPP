@@ -1,109 +1,309 @@
 import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <div class="page">
-      <div class="orb o1"></div>
-      <div class="orb o2"></div>
-      <div class="card glass animate-in">
-        <div class="logo">RS</div>
+    <div class="auth-page">
+      <div class="auth-card">
+
+        <div class="brand">
+          <span class="logo">🚐</span>
+
+          <div>
+            <strong>RideShare.pk</strong>
+            <small>Daily Repeat Commutes</small>
+          </div>
+        </div>
+
         <h1>Welcome back</h1>
-        <p class="sub">Sign in to match rides and manage your commute</p>
 
-        @if (error()) { <div class="toast err">{{ error() }}</div> }
+        <p class="sub">
+          Sign in to match campus &amp; office corridors.
+        </p>
 
-        <form [formGroup]="form" (ngSubmit)="submit()">
-          <label>Email</label>
-          <input type="email" formControlName="email" placeholder="you@example.com" />
-          <label>Password</label>
-          <input type="password" formControlName="password" placeholder="••••••••" />
-          <button type="submit" class="btn" [disabled]="form.invalid || loading()">
-            {{ loading() ? 'Signing in…' : 'Sign in' }}
-          </button>
-        </form>
+        @if (err()) {
+          <p class="err">{{ err() }}</p>
+        }
+
+        <label class="lbl">
+          Email
+
+          <input
+            class="inp"
+            type="email"
+            [(ngModel)]="email"
+            name="email"
+            autocomplete="username"
+            placeholder="Enter your email"
+          />
+        </label>
+
+        <label class="lbl">
+          Password
+
+          <input
+            class="inp"
+            type="password"
+            [(ngModel)]="password"
+            name="password"
+            autocomplete="current-password"
+            placeholder="Enter your password"
+          />
+        </label>
+
+        <button
+          type="button"
+          class="btn primary full"
+          (click)="login()"
+          [disabled]="busy()"
+        >
+          {{ busy() ? 'Signing in…' : 'Sign in' }}
+        </button>
 
         <p class="foot">
-          New here? <a routerLink="/auth/register">Create an account</a>
+          New here?
+          <a routerLink="/auth/register">Create account</a>
         </p>
-        <a routerLink="/" class="home">← Back to home</a>
+
       </div>
     </div>
   `,
+
   styles: [`
-    .page {
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
-      padding: 1.5rem; position: relative; font-family: var(--font);
+    .auth-page {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(
+        160deg,
+        #e8f8f1 0%,
+        #f3faf6 40%,
+        #fff 100%
+      );
+      padding: 1.5rem;
+      box-sizing: border-box;
     }
-    .orb { position: absolute; border-radius: 50%; filter: blur(80px); pointer-events: none; }
-    .o1 { width: 380px; height: 380px; background: rgba(91,140,255,0.2); top: -10%; left: -5%; }
-    .o2 { width: 280px; height: 280px; background: rgba(124,92,255,0.15); bottom: 5%; right: -5%; }
-    .card {
-      width: 100%; max-width: 400px; padding: 2rem; position: relative; z-index: 2;
-      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 1.5rem; backdrop-filter: blur(20px); box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+
+    .auth-card {
+      width: 100%;
+      max-width: 420px;
+      background: #fff;
+      border: 1px solid #b7ebc9;
+      border-radius: 20px;
+      padding: 1.75rem 1.5rem;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+      box-sizing: border-box;
     }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      margin-bottom: 1.25rem;
+    }
+
     .logo {
-      width: 48px; height: 48px; border-radius: 14px; margin-bottom: 1.25rem;
-      background: linear-gradient(135deg, #5b8cff, #7c5cff);
-      display: grid; place-items: center; font-weight: 800;
-      box-shadow: 0 8px 24px rgba(91,140,255,0.35);
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #0d9f6e, #14b8a6);
+      font-size: 1.2rem;
     }
-    h1 { font-size: 1.6rem; font-weight: 800; margin-bottom: 0.35rem; }
-    .sub { color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.5rem; }
-    label { display: block; font-size: 0.8rem; color: #94a3b8; margin: 0.75rem 0 0.35rem; }
-    input {
-      width: 100%; padding: 0.8rem 1rem; border-radius: 0.75rem; border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.3); color: #fff; outline: none; transition: border-color 0.2s;
+
+    .brand strong {
+      display: block;
+      color: #0d9f6e;
+      font-size: 1.1rem;
     }
-    input:focus { border-color: #5b8cff; box-shadow: 0 0 0 3px rgba(91,140,255,0.2); }
+
+    .brand small {
+      color: #64748b;
+      font-size: 0.75rem;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.45rem;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .sub {
+      margin: 0.35rem 0 1.1rem;
+      color: #64748b;
+      font-size: 0.9rem;
+    }
+
+    .lbl {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #64748b;
+      margin-bottom: 0.75rem;
+    }
+
+    .inp {
+      display: block;
+      width: 100%;
+      margin-top: 0.3rem;
+      min-height: 46px;
+      padding: 0.55rem 0.85rem;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+      font-size: 0.95rem;
+      box-sizing: border-box;
+      outline: none;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .inp:focus {
+      border-color: #0d9f6e;
+      box-shadow: 0 0 0 3px rgba(13, 159, 110, 0.1);
+    }
+
+    .inp::placeholder {
+      color: #94a3b8;
+    }
+
     .btn {
-      width: 100%; margin-top: 1.25rem; padding: 0.9rem; border: none; border-radius: 999px;
-      font-weight: 700; font-size: 0.95rem; cursor: pointer; color: #fff;
-      background: linear-gradient(135deg, #5b8cff, #7c5cff);
-      box-shadow: 0 10px 28px rgba(91,140,255,0.35); transition: transform 0.15s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      padding: 0.55rem 1.2rem;
+      border-radius: 999px;
+      font-weight: 800;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.2s ease, transform 0.1s ease;
     }
-    .btn:hover:not(:disabled) { transform: translateY(-1px); }
-    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-    .foot { text-align: center; margin-top: 1.25rem; font-size: 0.88rem; color: #94a3b8; }
-    .foot a { color: #93c5fd; font-weight: 600; }
-    .home { display: block; text-align: center; margin-top: 0.85rem; font-size: 0.82rem; color: #64748b; }
-    .toast.err {
-      background: rgba(248,113,113,0.12); border: 1px solid rgba(248,113,113,0.3);
-      color: #fca5a5; padding: 0.7rem; border-radius: 0.65rem; margin-bottom: 0.75rem; font-size: 0.85rem;
+
+    .btn.primary {
+      background: #0d9f6e;
+      color: #fff;
+    }
+
+    .btn.primary:hover:not(:disabled) {
+      opacity: 0.92;
+    }
+
+    .btn:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    .btn:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
+    .full {
+      width: 100%;
+      margin-top: 0.35rem;
+    }
+
+    .foot {
+      margin-top: 1.15rem;
+      text-align: center;
+      color: #64748b;
+      font-size: 0.9rem;
+    }
+
+    .foot a {
+      color: #0d9f6e;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .foot a:hover {
+      text-decoration: underline;
+    }
+
+    .err {
+      color: #e11d48;
+      background: #fff1f2;
+      border-radius: 10px;
+      padding: 0.55rem 0.75rem;
+      font-size: 0.88rem;
+      margin-bottom: 1rem;
+    }
+
+    @media (max-width: 480px) {
+      .auth-page {
+        padding: 1rem;
+      }
+
+      .auth-card {
+        padding: 1.5rem 1.2rem;
+        border-radius: 18px;
+      }
     }
   `]
 })
 export class LoginComponent {
   private auth = inject(AuthService);
   private router = inject(Router);
-  private fb = inject(FormBuilder);
-  loading = signal(false);
-  error = signal('');
-  form = this.fb.nonNullable.group({
-    email: ['', [Validators.required, Validators.email]],
-    password: ['', Validators.required]
-  });
 
-  submit(): void {
-    if (this.form.invalid) return;
-    this.loading.set(true);
-    this.error.set('');
-    this.auth.login(this.form.getRawValue()).subscribe({
-      next: res => {
-        this.loading.set(false);
-        if (res.success) this.router.navigate(['/app/dashboard']);
-        else this.error.set(res.message || 'Login failed');
+  email = '';
+  password = '';
+
+  busy = signal(false);
+  err = signal('');
+
+  login(): void {
+    this.err.set('');
+
+    // Validate fields
+    if (!this.email.trim() || !this.password) {
+      this.err.set('Email and password required');
+      return;
+    }
+
+    this.busy.set(true);
+
+    // IMPORTANT:
+    // AuthService.login() expects ONE LoginRequest object,
+    // not email and password as separate arguments.
+    const request = {
+      email: this.email.trim(),
+      password: this.password
+    };
+
+    console.log('Login request:', request);
+
+    this.auth.login(request).subscribe({
+      next: (res) => {
+        console.log('Login response:', res);
+
+        this.busy.set(false);
+
+        if (res.success && res.data) {
+          this.router.navigateByUrl('/app/dashboard');
+        } else {
+          this.err.set(
+            res.message || 'Invalid email or password'
+          );
+        }
       },
-      error: err => {
-        this.loading.set(false);
-        this.error.set(err.error?.message || 'Login failed');
+
+      error: (e: any) => {
+        console.error('Login error:', e);
+
+        this.busy.set(false);
+
+        this.err.set(
+          e.error?.message ||
+          e.error?.title ||
+          e.message ||
+          'Login failed'
+        );
       }
     });
   }

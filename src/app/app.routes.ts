@@ -154,6 +154,18 @@ export const routes: Routes = [
         title: 'Safety'
       },
       {
+        path: 'verification',
+        loadComponent: () =>
+          import('./features/verification/verification-page.component').then(m => m.VerificationPageComponent),
+        title: 'Verification'
+      },
+      {
+        path: 'admin/verification',
+        loadComponent: () =>
+          import('./features/admin/admin-verification.component').then(m => m.AdminVerificationComponent),
+        title: 'Admin Verification'
+      },
+      {
         path: 'settings',
         loadComponent: () =>
           import('./features/settings/settings.component').then(m => m.SettingsComponent),

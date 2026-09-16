@@ -1,302 +1,203 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { RouteService } from '../../core/services/route.service';
-import { GeolocationService } from '../../core/services/geolocation.service';
-import { ToastService } from '../../shared/services/toast.service';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-route-form',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <div class="page">
-      <div class="card">
-        <div class="header">
-          <h2>{{ isEdit() ? 'Edit Route' : 'Add Route' }}</h2>
-          <a routerLink="/app/routes" class="back">← My Routes</a>
+    <div class="rs-page">
+      <header class="head">
+        <div>
+          <div class="chips"><span class="chip">{{ id ? 'Edit' : 'Publish' }} route</span></div>
+          <h1>{{ id ? 'Edit route' : 'Publish repeat route' }}</h1>
+          <p class="sub">Set once — matching uses this every day.</p>
         </div>
-        @if (error()) { <div class="alert">{{ error() }}</div> }
-        @if (info()) { <div class="info">{{ info() }}</div> }
+        <a routerLink="/app/routes" class="btn ghost">My routes</a>
+      </header>
 
-        <form [formGroup]="form" (ngSubmit)="save()">
-          <h3 class="section">Source (Home)</h3>
-          <div class="gps-row">
-            <button type="button" class="btn ghost" (click)="fillSourceFromGps()" [disabled]="locating()">
-              {{ locating() ? 'Locating…' : '📍 Use my location as source' }}
-            </button>
-          </div>
-          <div class="field">
-            <label>Address *</label>
-            <input formControlName="sourceAddress" placeholder="e.g. G-11 Markaz, Islamabad" />
-          </div>
-          <div class="row">
-            <div class="field"><label>Latitude *</label><input type="number" step="any" formControlName="sourceLatitude" /></div>
-            <div class="field"><label>Longitude *</label><input type="number" step="any" formControlName="sourceLongitude" /></div>
-          </div>
+      <section class="card">
+        @if (err()) { <p class="err">{{ err() }}</p> }
 
-          <h3 class="section">Destination (Office / Campus)</h3>
-          <div class="gps-row">
-            <button type="button" class="btn ghost" (click)="fillDestFromGps()" [disabled]="locating()">
-              {{ locating() ? 'Locating…' : '📍 Use my location as destination' }}
-            </button>
-            <button type="button" class="btn ghost" (click)="copySourceToDestHint()">
-              Tip: set dest when you are at office
-            </button>
-          </div>
-          <div class="field">
-            <label>Address *</label>
-            <input formControlName="destinationAddress" placeholder="e.g. Blue Area, Islamabad" />
-          </div>
-          <div class="row">
-            <div class="field"><label>Latitude *</label><input type="number" step="any" formControlName="destinationLatitude" /></div>
-            <div class="field"><label>Longitude *</label><input type="number" step="any" formControlName="destinationLongitude" /></div>
-          </div>
-
-          <p class="hint">
-            Tip: Stand at home → “Use my location as source”. Later at office → “Use my location as destination”.
-            You only do this once per route. Matching uses this saved route every day.
-          </p>
-
-          <h3 class="section">Timing</h3>
-          <div class="row">
-            <div class="field"><label>Departure Time *</label><input type="time" formControlName="preferredDepartureTime" /></div>
-            <div class="field"><label>Tolerance (minutes) *</label><input type="number" formControlName="maximumTimeToleranceMinutes" min="0" max="120" /></div>
-          </div>
-
-          <h3 class="section">Schedule (Days)</h3>
-          <div class="days" formGroupName="schedule">
-            <label><input type="checkbox" formControlName="monday" /> Mon</label>
-            <label><input type="checkbox" formControlName="tuesday" /> Tue</label>
-            <label><input type="checkbox" formControlName="wednesday" /> Wed</label>
-            <label><input type="checkbox" formControlName="thursday" /> Thu</label>
-            <label><input type="checkbox" formControlName="friday" /> Fri</label>
-            <label><input type="checkbox" formControlName="saturday" /> Sat</label>
-            <label><input type="checkbox" formControlName="sunday" /> Sun</label>
-          </div>
-
-          <label class="active">
-            <input type="checkbox" formControlName="isActive" /> Route is active
+        <label class="lbl">Source address
+          <input class="inp" [(ngModel)]="sourceAddress" name="src" />
+        </label>
+        <div class="row2">
+          <label class="lbl">Source lat
+            <input class="inp" type="number" step="any" [(ngModel)]="sourceLatitude" name="slat" />
           </label>
+          <label class="lbl">Source lng
+            <input class="inp" type="number" step="any" [(ngModel)]="sourceLongitude" name="slng" />
+          </label>
+        </div>
+        <button type="button" class="btn ghost sm" (click)="fillSourceFromGps()">Use my location as source</button>
 
-          <div class="actions">
-            <button type="submit" class="btn" [disabled]="form.invalid || saving()">
-              {{ saving() ? 'Saving…' : (isEdit() ? 'Update route' : 'Save route') }}
-            </button>
-            <a routerLink="/app/routes" class="btn ghost">Cancel</a>
-          </div>
-        </form>
-      </div>
+        <label class="lbl">Destination address
+          <input class="inp" [(ngModel)]="destinationAddress" name="dst" />
+        </label>
+        <div class="row2">
+          <label class="lbl">Dest lat
+            <input class="inp" type="number" step="any" [(ngModel)]="destinationLatitude" name="dlat" />
+          </label>
+          <label class="lbl">Dest lng
+            <input class="inp" type="number" step="any" [(ngModel)]="destinationLongitude" name="dlng" />
+          </label>
+        </div>
+
+        <div class="row2">
+          <label class="lbl">Departure time
+            <input class="inp" type="time" [(ngModel)]="preferredDepartureTime" name="time" />
+          </label>
+          <label class="lbl">Tolerance (minutes)
+            <input class="inp" type="number" [(ngModel)]="tolerance" name="tol" />
+          </label>
+        </div>
+
+        <p class="lbl">Days</p>
+        <div class="days">
+          @for (d of dayKeys; track d.key) {
+            <label class="day">
+              <input type="checkbox" [(ngModel)]="days[d.key]" [name]="d.key" />
+              {{ d.label }}
+            </label>
+          }
+        </div>
+
+        <button type="button" class="btn primary" (click)="save()" [disabled]="busy()">
+          {{ id ? 'Update route' : 'Publish route' }}
+        </button>
+      </section>
     </div>
   `,
   styles: [`
-    .page { max-width: 640px; margin: 0 auto; }
+    .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+    .chip {
+      font-size: 0.72rem; font-weight: 800; padding: 0.25rem 0.65rem; border-radius: 999px;
+      background: #e8f8f1; color: #0b7f58;
+    }
+    h1 { margin: 0.35rem 0 0; font-size: 1.35rem; font-weight: 800; }
+    .sub { margin: 0.3rem 0 0; color: #64748b; font-size: 0.9rem; }
     .card {
-      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 1.1rem; padding: 1.25rem;
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 16px; padding: 1.2rem;
+      max-width: 600px; box-shadow: 0 6px 18px rgba(15,23,42,0.04);
     }
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-    h2 { margin: 0; font-size: 1.25rem; }
-    .back { color: #94a3b8; text-decoration: none; font-size: 0.9rem; }
-    .section { margin: 1.1rem 0 0.55rem; font-size: 0.95rem; color: #cbd5e1; }
-    .field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.65rem; }
-    .field label { font-size: 0.78rem; color: #94a3b8; }
-    .field input {
-      padding: 0.55rem 0.7rem; border-radius: 0.65rem; border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.3); color: #fff;
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; }
+    @media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }
+    .lbl { display: block; font-size: 0.78rem; font-weight: 700; color: #64748b; margin: 0.55rem 0; }
+    .inp {
+      display: block; width: 100%; margin-top: 0.3rem; min-height: 44px;
+      padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid #e2e8f0;
     }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; }
-    @media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
-    .gps-row { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.6rem; }
-    .days { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-bottom: 0.85rem; }
-    .days label { font-size: 0.85rem; color: #e2e8f0; display: flex; align-items: center; gap: 0.3rem; }
-    .active { display: flex; align-items: center; gap: 0.4rem; margin: 0.75rem 0; font-size: 0.9rem; }
-    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+    .days { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.85rem; }
+    .day {
+      display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; font-weight: 700;
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 999px; padding: 0.35rem 0.7rem;
+    }
     .btn {
-      padding: 0.55rem 1rem; border-radius: 999px; border: none; font-weight: 600; cursor: pointer;
-      background: linear-gradient(135deg,#5b8cff,#7c5cff); color: #fff; text-decoration: none;
-      display: inline-flex; align-items: center;
+      display: inline-flex; align-items: center; min-height: 44px; padding: 0.5rem 1.1rem;
+      border-radius: 999px; font-weight: 800; border: none; cursor: pointer; text-decoration: none;
     }
-    .btn.ghost { background: transparent; border: 1px solid rgba(255,255,255,0.15); color: #e2e8f0; }
-    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-    .alert { background: rgba(248,113,113,0.15); color: #fca5a5; padding: 0.6rem 0.8rem; border-radius: 0.6rem; margin-bottom: 0.75rem; }
-    .info { background: rgba(91,140,255,0.12); color: #93c5fd; padding: 0.6rem 0.8rem; border-radius: 0.6rem; margin-bottom: 0.75rem; font-size: 0.88rem; }
-    .hint { color: #94a3b8; font-size: 0.82rem; line-height: 1.45; margin: 0.35rem 0 0.75rem; }
+    .btn.primary { background: #0d9f6e; color: #fff; }
+    .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
+    .btn.sm { min-height: 36px; font-size: 0.8rem; margin-bottom: 0.5rem; }
+    .err { color: #e11d48; }
   `]
 })
 export class RouteFormComponent implements OnInit {
-  private fb = inject(FormBuilder);
-  private routeService = inject(RouteService);
-  private geo = inject(GeolocationService);
-  private toast = inject(ToastService);
+  private http = inject(HttpClient);
+  private route = inject(ActivatedRoute);
   private router = inject(Router);
-  private activated = inject(ActivatedRoute);
+  private api = (environment.apiUrl || '/api/v1').replace(/\/$/, '');
 
-  isEdit = signal(false);
-  routeId = signal<string | null>(null);
-  saving = signal(false);
-  locating = signal(false);
-  error = signal('');
-  info = signal('');
-
-  form = this.fb.nonNullable.group({
-    sourceAddress: ['', Validators.required],
-    sourceLatitude: [33.6844 as number, Validators.required],
-    sourceLongitude: [73.0479 as number, Validators.required],
-    destinationAddress: ['', Validators.required],
-    destinationLatitude: [33.6938 as number, Validators.required],
-    destinationLongitude: [73.0652 as number, Validators.required],
-    preferredDepartureTime: ['08:00', Validators.required],
-    maximumTimeToleranceMinutes: [15, [Validators.required, Validators.min(0), Validators.max(120)]],
-    isActive: [true],
-    schedule: this.fb.nonNullable.group({
-      monday: [true],
-      tuesday: [true],
-      wednesday: [true],
-      thursday: [true],
-      friday: [true],
-      saturday: [false],
-      sunday: [false]
-    })
-  });
+  id = '';
+  sourceAddress = '';
+  destinationAddress = '';
+  sourceLatitude: number | null = null;
+  sourceLongitude: number | null = null;
+  destinationLatitude: number | null = null;
+  destinationLongitude: number | null = null;
+  preferredDepartureTime = '08:00';
+  tolerance = 15;
+  days: Record<string, boolean> = {
+    monday: true, tuesday: true, wednesday: true, thursday: true,
+    friday: true, saturday: false, sunday: false
+  };
+  dayKeys = [
+    { key: 'monday', label: 'Mon' },
+    { key: 'tuesday', label: 'Tue' },
+    { key: 'wednesday', label: 'Wed' },
+    { key: 'thursday', label: 'Thu' },
+    { key: 'friday', label: 'Fri' },
+    { key: 'saturday', label: 'Sat' },
+    { key: 'sunday', label: 'Sun' }
+  ];
+  busy = signal(false);
+  err = signal('');
 
   ngOnInit(): void {
-    const id = this.activated.snapshot.paramMap.get('id');
-    if (id) {
-      this.isEdit.set(true);
-      this.routeId.set(id);
-      this.routeService.getById(id).subscribe({
-        next: res => {
-          if (res.success && res.data) {
-            const r = res.data;
-            const s = r.schedules?.[0];
-            this.form.patchValue({
-              sourceAddress: r.sourceAddress,
-              sourceLatitude: r.sourceLatitude,
-              sourceLongitude: r.sourceLongitude,
-              destinationAddress: r.destinationAddress,
-              destinationLatitude: r.destinationLatitude,
-              destinationLongitude: r.destinationLongitude,
-              preferredDepartureTime: (r.preferredDepartureTime || '08:00').substring(0, 5),
-              maximumTimeToleranceMinutes: r.maximumTimeToleranceMinutes,
-              isActive: r.isActive,
-              schedule: {
-                monday: s?.monday ?? false,
-                tuesday: s?.tuesday ?? false,
-                wednesday: s?.wednesday ?? false,
-                thursday: s?.thursday ?? false,
-                friday: s?.friday ?? false,
-                saturday: s?.saturday ?? false,
-                sunday: s?.sunday ?? false
-              }
-            });
-          } else this.error.set(res.message);
-        },
-        error: err => this.error.set(err.error?.message || 'Failed to load route')
+    this.id = this.route.snapshot.paramMap.get('id') || '';
+    if (this.id) {
+      this.http.get<any>(`${this.api}/routes/${this.id}`).subscribe({
+        next: (r) => {
+          const d = r?.data ?? r;
+          this.sourceAddress = d?.sourceAddress || '';
+          this.destinationAddress = d?.destinationAddress || '';
+          this.sourceLatitude = d?.sourceLatitude ?? null;
+          this.sourceLongitude = d?.sourceLongitude ?? null;
+          this.destinationLatitude = d?.destinationLatitude ?? null;
+          this.destinationLongitude = d?.destinationLongitude ?? null;
+          const t = d?.preferredDepartureTime;
+          if (t) this.preferredDepartureTime = String(t).slice(0, 5);
+          this.tolerance = d?.maximumTimeToleranceMinutes ?? d?.timeToleranceMinutes ?? 15;
+        }
       });
     }
   }
 
   fillSourceFromGps(): void {
-    this.locating.set(true);
-    this.error.set('');
-    this.geo.getCurrentPosition().subscribe({
-      next: p => {
-        this.locating.set(false);
-        this.form.patchValue({
-          sourceLatitude: p.latitude,
-          sourceLongitude: p.longitude
-        });
-        this.info.set('Source set from your current GPS. Add a short address label (e.g. Home).');
-        this.toast.success('Source = current location');
-      },
-      error: () => {
-        this.locating.set(false);
-        this.error.set(this.geo.error() || 'Could not get location. Allow location permission.');
-        this.toast.error('Location failed');
-      }
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition((pos) => {
+      this.sourceLatitude = +pos.coords.latitude.toFixed(6);
+      this.sourceLongitude = +pos.coords.longitude.toFixed(6);
     });
-  }
-
-  fillDestFromGps(): void {
-    this.locating.set(true);
-    this.error.set('');
-    this.geo.getCurrentPosition().subscribe({
-      next: p => {
-        this.locating.set(false);
-        this.form.patchValue({
-          destinationLatitude: p.latitude,
-          destinationLongitude: p.longitude
-        });
-        this.info.set('Destination set from your current GPS. Add a short address label (e.g. Office).');
-        this.toast.success('Destination = current location');
-      },
-      error: () => {
-        this.locating.set(false);
-        this.error.set(this.geo.error() || 'Could not get location. Allow location permission.');
-        this.toast.error('Location failed');
-      }
-    });
-  }
-
-  copySourceToDestHint(): void {
-    this.info.set('Go to your office/campus, open Edit Route, and tap “Use my location as destination”.');
   }
 
   save(): void {
-    if (this.form.invalid) return;
-    const v = this.form.getRawValue();
-    const sched = v.schedule;
-    const hasDay = sched.monday || sched.tuesday || sched.wednesday || sched.thursday ||
-      sched.friday || sched.saturday || sched.sunday;
-    if (!hasDay) {
-      this.error.set('Select at least one day for the schedule.');
-      return;
-    }
-
-    this.saving.set(true);
-    this.error.set('');
-
-   const body = {
-  sourceLatitude: Number(v.sourceLatitude),
-  sourceLongitude: Number(v.sourceLongitude),
-  sourceAddress: v.sourceAddress,
-  destinationLatitude: Number(v.destinationLatitude),
-  destinationLongitude: Number(v.destinationLongitude),
-  destinationAddress: v.destinationAddress,
-  preferredDepartureTime: (v.preferredDepartureTime || '08:00').substring(0, 5), // HH:mm only
-  maximumTimeToleranceMinutes: Number(v.maximumTimeToleranceMinutes),
-  isActive: v.isActive,
-  schedules: [{
-    monday: sched.monday,
-    tuesday: sched.tuesday,
-    wednesday: sched.wednesday,
-    thursday: sched.thursday,
-    friday: sched.friday,
-    saturday: sched.saturday,
-    sunday: sched.sunday,
-    isActive: true
-  }]
-};
-
-    const req$ = this.isEdit() && this.routeId()
-      ? this.routeService.update(this.routeId()!, body)
-      : this.routeService.create(body);
-
-    req$.subscribe({
-      next: res => {
-        this.saving.set(false);
-        if (res.success) {
-          this.toast.success('Route saved');
-          this.router.navigate(['/app/routes']);
-        } else {
-          this.error.set(res.message + (res.errors?.length ? ': ' + res.errors.join(', ') : ''));
-        }
+    this.busy.set(true); this.err.set('');
+    const headers = new HttpHeaders({ 'Content-Type': 'application/json' });
+    const time = this.preferredDepartureTime?.length === 5
+      ? this.preferredDepartureTime + ':00'
+      : this.preferredDepartureTime;
+    const body: any = {
+      sourceAddress: this.sourceAddress,
+      destinationAddress: this.destinationAddress,
+      sourceLatitude: this.sourceLatitude,
+      sourceLongitude: this.sourceLongitude,
+      destinationLatitude: this.destinationLatitude,
+      destinationLongitude: this.destinationLongitude,
+      preferredDepartureTime: time,
+      maximumTimeToleranceMinutes: this.tolerance,
+      timeToleranceMinutes: this.tolerance,
+      ...this.days,
+      schedules: this.dayKeys
+        .filter((d) => this.days[d.key])
+        .map((d) => ({ dayOfWeek: d.key, isActive: true }))
+    };
+    const req = this.id
+      ? this.http.put(`${this.api}/routes/${this.id}`, body, { headers })
+      : this.http.post(`${this.api}/routes`, body, { headers });
+    req.subscribe({
+      next: () => {
+        this.busy.set(false);
+        this.router.navigateByUrl('/app/routes');
       },
-      error: err => {
-        this.saving.set(false);
-        this.error.set(err.error?.message || 'Save failed');
+      error: (e) => {
+        this.busy.set(false);
+        this.err.set(e.error?.message || 'Save failed');
       }
     });
   }

@@ -1,119 +1,167 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { DriverService } from '../../core/services/driver.service';
+import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-driver-profile',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <div class="page">
-      <div class="card">
-        <div class="header">
-          <h2>Driver Profile</h2>
-          <a routerLink="/" class="back">← Home</a>
-        </div>
-        @if (error()) { <div class="alert error">{{ error() }}</div> }
-        @if (success()) { <div class="alert ok">{{ success() }}</div> }
-        <p class="meta">{{ fullName() }} · {{ email() }}</p>
-        <p class="status">Verification: <strong>{{ verification() }}</strong></p>
-
-        <form [formGroup]="form" (ngSubmit)="save()">
-          <div class="field"><label>License Number</label><input formControlName="licenseNumber" /></div>
-          <div class="field"><label>License Expiry</label><input type="date" formControlName="licenseExpiryDate" /></div>
-          <div class="field"><label>Years of Experience</label><input type="number" formControlName="yearsOfExperience" min="0" /></div>
-          <div class="field check">
-            <label><input type="checkbox" formControlName="isAvailable" /> Available for rides</label>
+    <div class="rs-page">
+      <header class="head">
+        <div>
+          <div class="chips">
+            <span class="chip">Driver Profile</span>
+            <span class="chip gold">{{ verifiedLabel() }}</span>
           </div>
-          <div class="field"><label>Notes</label><textarea formControlName="notes" rows="3"></textarea></div>
-          <button type="submit" [disabled]="form.invalid || saving()">{{ saving() ? 'Saving...' : 'Save Driver Profile' }}</button>
-        </form>
-      </div>
+          <h1>Driver &amp; availability</h1>
+          <p class="sub">Control availability so passengers can match your corridor.</p>
+        </div>
+        <a routerLink="/app/vehicles" class="btn ghost">My Vehicles</a>
+      </header>
+
+      <section class="card avail">
+        <div>
+          <h2>Availability</h2>
+          <p class="muted">When off, you will not appear in matching results.</p>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" [(ngModel)]="isAvailable" (ngModelChange)="saveAvailability()" />
+          <span>{{ isAvailable ? 'Available' : 'Offline' }}</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Driving information</h2>
+        @if (err()) { <p class="err">{{ err() }}</p> }
+        @if (msg()) { <p class="ok">{{ msg() }}</p> }
+
+        <div class="row2">
+          <label class="lbl">License number
+            <input class="inp" [(ngModel)]="licenseNumber" name="lic" />
+          </label>
+          <label class="lbl">Years of experience
+            <input class="inp" type="number" min="0" [(ngModel)]="yearsOfExperience" name="yrs" />
+          </label>
+        </div>
+        <label class="lbl">Notes (optional)
+          <input class="inp" [(ngModel)]="notes" name="notes" placeholder="Preferred corridors, vehicle hints…" />
+        </label>
+        <button type="button" class="btn primary" (click)="save()" [disabled]="busy()">Save profile</button>
+      </section>
+
+      <section class="card summary">
+        <div class="row"><span>Verification</span><strong>{{ verifiedLabel() }}</strong></div>
+        <div class="row"><span>License</span><strong>{{ licenseNumber || '—' }}</strong></div>
+        <div class="row"><span>Experience</span><strong>{{ yearsOfExperience != null ? yearsOfExperience + ' yrs' : '—' }}</strong></div>
+        <a routerLink="/app/verification" class="link">Go to Verification →</a>
+      </section>
     </div>
   `,
   styles: [`
-    .page { min-height:100vh; background:linear-gradient(135deg,#0f172a,#1e3a8a); padding:2rem 1rem; display:flex; justify-content:center; }
-    .card { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:1rem; padding:1.75rem; width:100%; max-width:520px; color:#fff; }
-    .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem; }
-    .back { color:#60a5fa; font-size:0.9rem; }
-    .meta, .status { color:#94a3b8; font-size:0.9rem; margin-bottom:0.5rem; }
-    .field { margin-bottom:0.85rem; }
-    label { display:block; font-size:0.85rem; color:#cbd5e1; margin-bottom:0.3rem; }
-    input, textarea { width:100%; padding:0.65rem 0.85rem; border-radius:0.5rem; border:1px solid rgba(255,255,255,0.2);
-                      background:rgba(0,0,0,0.3); color:#fff; box-sizing:border-box; }
-    .check label { display:flex; align-items:center; gap:0.5rem; }
-    .check input { width:auto; }
-    button { width:100%; padding:0.8rem; border:none; border-radius:0.5rem; background:#2563eb; color:#fff; font-weight:600; cursor:pointer; }
-    .alert { padding:0.7rem; border-radius:0.5rem; margin-bottom:1rem; font-size:0.9rem; }
-    .error { background:rgba(239,68,68,0.2); border:1px solid #ef4444; color:#fca5a5; }
-    .ok { background:rgba(34,197,94,0.2); border:1px solid #22c55e; color:#86efac; }
+    .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+    .chips { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+    .chip {
+      font-size: 0.72rem; font-weight: 800; padding: 0.25rem 0.65rem; border-radius: 999px;
+      background: #e8f8f1; color: #0b7f58;
+    }
+    .chip.gold { background: #fff7cc; color: #a16207; }
+    h1 { margin: 0; font-size: 1.4rem; font-weight: 800; }
+    h2 { margin: 0 0 0.45rem; font-size: 1.05rem; font-weight: 800; }
+    .sub { margin: 0.3rem 0 0; color: #64748b; font-size: 0.9rem; }
+    .card {
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 16px;
+      padding: 1.15rem; margin-bottom: 0.9rem;
+      box-shadow: 0 6px 18px rgba(15,23,42,0.04);
+    }
+    .avail { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .toggle {
+      display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 800;
+      background: #e8f8f1; border: 1px solid #b7ebc9; border-radius: 999px; padding: 0.5rem 1rem;
+    }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; }
+    @media (max-width: 600px) { .row2 { grid-template-columns: 1fr; } }
+    .lbl { display: block; font-size: 0.78rem; font-weight: 700; color: #64748b; margin-bottom: 0.55rem; }
+    .inp {
+      display: block; width: 100%; margin-top: 0.3rem; min-height: 44px;
+      padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid #e2e8f0;
+    }
+    .btn {
+      display: inline-flex; align-items: center; min-height: 44px; padding: 0.5rem 1.1rem;
+      border-radius: 999px; font-weight: 800; border: none; cursor: pointer; text-decoration: none;
+    }
+    .btn.primary { background: #0d9f6e; color: #fff; margin-top: 0.35rem; }
+    .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
+    .summary .row {
+      display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid #f1f5f9;
+    }
+    .link { display: inline-block; margin-top: 0.75rem; color: #0d9f6e; font-weight: 700; }
+    .muted { color: #64748b; } .err { color: #e11d48; } .ok { color: #0d9f6e; }
   `]
 })
 export class DriverProfileComponent implements OnInit {
-  private driverService = inject(DriverService);
-  private fb = inject(FormBuilder);
+  private http = inject(HttpClient);
+  private api = (environment.apiUrl || '/api/v1').replace(/\/$/, '');
 
-  form = this.fb.nonNullable.group({
-    licenseNumber: [''],
-    licenseExpiryDate: [''],
-    yearsOfExperience: [0, [Validators.required, Validators.min(0)]],
-    isAvailable: [true],
-    notes: ['']
-  });
-
-  fullName = signal('');
-  email = signal('');
-  verification = signal('Pending');
-  saving = signal(false);
-  error = signal('');
-  success = signal('');
+  isAvailable = false;
+  licenseNumber = '';
+  yearsOfExperience: number | null = null;
+  notes = '';
+  verificationStatus: any = null;
+  busy = signal(false);
+  err = signal('');
+  msg = signal('');
 
   ngOnInit(): void {
-    this.driverService.getMe().subscribe({
-      next: res => {
-        if (res.success && res.data) {
-          const d = res.data;
-          this.fullName.set(d.fullName);
-          this.email.set(d.email);
-          this.verification.set(d.verificationStatus);
-          this.form.patchValue({
-            licenseNumber: d.licenseNumber || '',
-            licenseExpiryDate: d.licenseExpiryDate ? d.licenseExpiryDate.substring(0, 10) : '',
-            yearsOfExperience: d.yearsOfExperience || 0,
-            isAvailable: d.isAvailable,
-            notes: d.notes || ''
-          });
-        } else this.error.set(res.message);
+    this.http.get<any>(`${this.api}/drivers/me`).subscribe({
+      next: (r) => {
+        const d = r?.data ?? r;
+        this.isAvailable = !!(d?.isAvailable ?? d?.isActive);
+        this.licenseNumber = d?.licenseNumber || d?.license || '';
+        this.yearsOfExperience = d?.yearsOfExperience ?? null;
+        this.notes = d?.notes || '';
+        this.verificationStatus = d?.verificationStatus;
       },
-      error: err => this.error.set(err.error?.message || 'Failed to load driver profile (Driver role required).')
+      error: (e) => this.err.set(e.error?.message || 'Could not load driver profile')
+    });
+  }
+
+  verifiedLabel(): string {
+    const s = this.verificationStatus;
+    if (s === 1 || s === 'Verified' || s === 'Approved') return 'Verified';
+    if (s == null) return 'Pending';
+    return String(s);
+  }
+
+  saveAvailability(): void {
+    this.http.put(`${this.api}/drivers/me`, { isAvailable: this.isAvailable }).subscribe({
+      next: () => this.msg.set(this.isAvailable ? 'You are available' : 'You are offline'),
+      error: () => this.http.patch(`${this.api}/drivers/me/availability`, { isAvailable: this.isAvailable }).subscribe({
+        next: () => this.msg.set('Availability updated'),
+        error: (e) => this.err.set(e.error?.message || 'Update failed')
+      })
     });
   }
 
   save(): void {
-    if (this.form.invalid) return;
-    this.saving.set(true);
-    this.error.set('');
-    this.success.set('');
-    const v = this.form.getRawValue();
-    this.driverService.updateMe({
-      licenseNumber: v.licenseNumber || undefined,
-      licenseExpiryDate: v.licenseExpiryDate || null,
-      yearsOfExperience: Number(v.yearsOfExperience),
-      isAvailable: v.isAvailable,
-      notes: v.notes || undefined
-    }).subscribe({
-      next: res => {
-        this.saving.set(false);
-        if (res.success) {
-          this.success.set('Driver profile saved.');
-          if (res.data) this.verification.set(res.data.verificationStatus);
-        } else this.error.set(res.message);
+    this.busy.set(true); this.err.set(''); this.msg.set('');
+    const body = {
+      licenseNumber: this.licenseNumber,
+      yearsOfExperience: this.yearsOfExperience,
+      notes: this.notes,
+      isAvailable: this.isAvailable
+    };
+    this.http.put<any>(`${this.api}/drivers/me`, body).subscribe({
+      next: (r) => {
+        this.busy.set(false);
+        this.msg.set(r?.message || 'Profile saved');
       },
-      error: err => {
-        this.saving.set(false);
-        this.error.set(err.error?.message || 'Save failed');
+      error: (e) => {
+        this.busy.set(false);
+        this.err.set(e.error?.message || 'Save failed');
       }
     });
   }

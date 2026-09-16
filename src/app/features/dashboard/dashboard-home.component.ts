@@ -1,331 +1,387 @@
 import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
-import { forkJoin, of } from 'rxjs';
-import { catchError, map } from 'rxjs/operators';
+import { HttpClient } from '@angular/common/http';
 import { AuthService } from '../../core/services/auth.service';
-import { DriverService, DriverProfile } from '../../core/services/driver.service';
-import { VehicleService, Vehicle } from '../../core/services/vehicle.service';
-import { RouteService, RouteDto } from '../../core/services/route.service';
-import { RideService, RideDto } from '../../core/services/ride.service';
-import { RideRequestService, RideRequestDto } from '../../core/services/ride-request.service';
+import { environment } from '../../../environments/environment';
 
+/**
+ * UI Phase 2 — RideShare.pk dashboard (light cards, real API data where available)
+ */
 @Component({
   selector: 'app-dashboard-home',
   standalone: true,
   imports: [CommonModule, RouterLink],
   template: `
-    <div class="page">
-      <header class="hero" [class.driver]="isDriver()" [class.passenger]="!isDriver()">
-        <div>
-          <p class="eyebrow">{{ isDriver() ? 'DRIVER WORKSPACE' : 'PASSENGER WORKSPACE' }}</p>
-          <h1>Hello, {{ firstName() }}</h1>
-          <p class="sub">
-            @if (isDriver()) {
-              Manage availability, vehicle and today's passenger rides.
-            } @else {
-              Your daily commute — routes, matches and upcoming rides.
+    <div class="rs-page dash">
+      <!-- Hero -->
+      <section class="hero">
+        <div class="hero-left">
+          <div class="chips">
+            <span class="chip role">{{ roleLabel() }}</span>
+            @if (isVerified()) {
+              <span class="chip verified">Verified Commuter</span>
             }
+          </div>
+          <h1>Hi, {{ firstName() }}</h1>
+          <p class="sub">
+            Availability, vehicle and today's repeat commute rides across Islamabad &amp; Rawalpindi.
           </p>
         </div>
-        <div class="hero-actions">
-          @if (isDriver()) {
-            <a routerLink="/app/driver-profile" class="btn primary">Driver profile</a>
-            <a routerLink="/app/vehicles" class="btn ghost">My vehicle</a>
-          } @else {
-            <a routerLink="/app/rides/find" class="btn primary">Find a ride</a>
-            <a routerLink="/app/routes" class="btn ghost">My routes</a>
-          }
+        <div class="hero-right">
+          <span class="dot" [class.on]="isAvailable()"></span>
+          <div>
+            <strong>{{ isAvailable() ? 'Available for rides' : 'Not available' }}</strong>
+            <p>Turn availability on in Driver Profile so passengers can match your corridor.</p>
+          </div>
         </div>
-      </header>
+      </section>
 
-      <!-- ===================== DRIVER DASHBOARD ===================== -->
-      @if (isDriver()) {
-        <section class="grid driver-grid">
-          <article class="card status-card">
-            <div class="card-top">
-              <h2>Availability</h2>
-              <span class="pill" [class.on]="driverProfile()?.isAvailable">
-                {{ driverProfile()?.isAvailable ? 'Available' : 'Offline' }}
-              </span>
+      <!-- Stat cards -->
+      <div class="stats">
+        <a class="stat" routerLink="/app/driver-profile">
+          <div class="stat-top">
+            <span class="label">AVAILABILITY</span>
+            <span class="pill" [class.ok]="isAvailable()">{{ isAvailable() ? 'Available' : 'Off' }}</span>
+          </div>
+          <div class="rows">
+            <div><span>License</span><strong>{{ license() }}</strong></div>
+            <div><span>Experience</span><strong>{{ experience() }}</strong></div>
+            <div><span>Status</span><strong>{{ driverStatus() }}</strong></div>
+          </div>
+          <span class="more">Edit Profile →</span>
+        </a>
+
+        <a class="stat" routerLink="/app/vehicles">
+          <div class="stat-top">
+            <span class="label">VEHICLE</span>
+            <span class="icon">🚐</span>
+          </div>
+          @if (primaryVehicle(); as v) {
+            <h3>{{ v.make }} {{ v.model }}</h3>
+            <p class="meta">{{ v.registrationNumber }} · {{ v.color || '—' }}</p>
+            <div class="tags">
+              <span class="tag">{{ v.seatingCapacity || '?' }} seats</span>
+              @if (v.isActive !== false) { <span class="tag green">Active</span> }
             </div>
-            @if (!driverProfile()) {
-              <p class="muted">No driver profile yet. Passengers cannot match you until this is set up.</p>
-              <a routerLink="/app/driver-profile" class="btn primary sm">Set up driver profile →</a>
-            } @else {
-              <ul class="kv">
-                <li><span>License</span><strong>{{ driverProfile()!.licenseNumber || '—' }}</strong></li>
-                <li><span>Experience</span><strong>{{ driverProfile()!.yearsOfExperience }} yrs</strong></li>
-                <li><span>Verification</span><strong>{{ driverProfile()!.verificationStatus || 'Pending' }}</strong></li>
-              </ul>
-              <a routerLink="/app/driver-profile" class="link">Edit availability →</a>
-            }
-          </article>
+          } @else {
+            <h3>No vehicle yet</h3>
+            <p class="meta">Add a commute vehicle to appear in matching.</p>
+          }
+          <span class="more">My Vehicles →</span>
+        </a>
 
-          <article class="card">
-            <h2>Vehicle</h2>
-            @if (vehicles().length === 0) {
-              <p class="muted">Add a vehicle or matching will find no drivers.</p>
-              <a routerLink="/app/vehicles" class="btn primary sm">Add vehicle →</a>
-            } @else {
-              @for (v of vehicles(); track v.id) {
-                <div class="row">
-                  <strong>{{ v.make }} {{ v.model }}</strong>
-                  <span>{{ v.registrationNumber }} · {{ v.seatingCapacity }} seats · {{ v.color }}</span>
-                </div>
-              }
-              <a routerLink="/app/vehicles" class="link">Manage vehicles →</a>
-            }
-          </article>
+        <a class="stat" routerLink="/app/routes">
+          <div class="stat-top">
+            <span class="label">ROUTES</span>
+            <span class="icon">📍</span>
+          </div>
+          @if (topRoute(); as r) {
+            <h3>{{ shortAddr(r.sourceAddress) }}</h3>
+            <p class="meta">→ {{ shortAddr(r.destinationAddress) }}</p>
+            <p class="meta">{{ formatTime(r.preferredDepartureTime) }} · ±{{ r.maximumTimeToleranceMinutes ?? 15 }} min</p>
+          } @else {
+            <h3>No routes yet</h3>
+            <p class="meta">Publish your daily home → office corridor.</p>
+          }
+          <span class="more">Manage ({{ routeCount() }}) →</span>
+        </a>
 
-          <article class="card span2">
-            <h2>Today / upcoming rides (as driver)</h2>
-            @if (driverRides().length === 0) {
-              <p class="muted">No upcoming rides yet. Stay Available and keep your route active so passengers can match you.</p>
-            } @else {
-              @for (r of driverRides(); track r.id) {
-                <a class="ride-row" [routerLink]="['/app/rides/lifecycle', r.id]">
-                  <div>
-                    <strong>{{ r.sourceAddress }} → {{ r.destinationAddress }}</strong>
-                    <span>{{ r.travelDate }} · {{ r.scheduledDepartureTime }}</span>
-                  </div>
-                  <em>{{ r.status }}</em>
-                </a>
-              }
-            }
-          </article>
+        <a class="stat" routerLink="/app/rides/lifecycle">
+          <div class="stat-top">
+            <span class="label">MY RIDES</span>
+            <span class="pill star">★</span>
+          </div>
+          <h3>{{ rideCount() }} <small>trips</small></h3>
+          <p class="meta">Open lifecycle for active, upcoming &amp; history.</p>
+          <span class="more">Ride Lifecycle →</span>
+        </a>
+      </div>
 
-          <article class="card">
-            <h2>Quick actions</h2>
-            <div class="actions">
-              <a routerLink="/app/driver-profile" class="chip">Toggle available</a>
-              <a routerLink="/app/vehicles" class="chip">Vehicle</a>
-              <a routerLink="/app/routes" class="chip">My routes</a>
-              <a routerLink="/app/rides/lifecycle" class="chip">My rides</a>
-              <a routerLink="/app/safety" class="chip">Safety / SOS</a>
-            </div>
-          </article>
-
-          <article class="card">
-            <h2>Tips for drivers</h2>
-            <ol class="tips">
-              <li>Set <strong>Available for rides</strong> on Driver Profile.</li>
-              <li>Add an active vehicle with enough seats.</li>
-              <li>Keep your daily route + schedule days correct.</li>
-            </ol>
-          </article>
+      <!-- Active ride banner -->
+      @if (activeRide(); as ar) {
+        <section class="active">
+          <div class="active-left">
+            <span class="chip yellow">ACTIVE RIDE · {{ ar.status || 'In progress' }}</span>
+            <h2>{{ shortAddr(ar.sourceAddress || ar.routeSource) }} → {{ shortAddr(ar.destinationAddress || ar.routeDestination) }}</h2>
+            <p class="meta">
+              @if (ar.id) { ID: {{ ar.id }} · }
+              Open details for OTP, chat, GPS &amp; SOS
+            </p>
+          </div>
+          <div class="active-actions">
+            <a class="btn primary" [routerLink]="['/app/rides/lifecycle', ar.id]">Open ride</a>
+            <a class="btn ghost" routerLink="/app/gps">Track GPS</a>
+            <a class="btn danger" routerLink="/app/safety">SOS</a>
+          </div>
+        </section>
+      } @else {
+        <section class="active soft">
+          <div>
+            <span class="chip yellow">NO ACTIVE RIDE</span>
+            <h2>Find a match or wait for today's commute</h2>
+            <p class="meta">Use Find Ride or publish routes so matching can run.</p>
+          </div>
+          <div class="active-actions">
+            <a class="btn primary" routerLink="/app/rides/find">Find Ride</a>
+            <a class="btn ghost" routerLink="/app/routes">My Routes</a>
+          </div>
         </section>
       }
 
-      <!-- ===================== PASSENGER DASHBOARD ===================== -->
-      @if (!isDriver()) {
-        <section class="grid passenger-grid">
-          <article class="card accent">
-            <h2>Find your commute</h2>
-            <p class="muted">Match with drivers on the same route and time window.</p>
-            <a routerLink="/app/rides/find" class="btn primary sm">Find a ride →</a>
-          </article>
+      <!-- Shortcuts -->
+      <div class="shortcuts">
+        <a routerLink="/app/rides/find"><strong>Find Ride</strong><span>Request commute</span></a>
+        <a routerLink="/app/routes"><strong>My Routes</strong><span>{{ routeCount() }} published</span></a>
+        <a routerLink="/app/gps"><strong>Maps &amp; GPS</strong><span>Leaflet · OSM</span></a>
+        <a routerLink="/app/wallet"><strong>PKR Wallet</strong><span>Deposit &amp; fare</span></a>
+        <a routerLink="/app/safety"><strong>Safety &amp; SOS</strong><span>Emergency contacts</span></a>
+        <a routerLink="/app/verification"><strong>Verification</strong><span>{{ isVerified() ? 'Verified' : 'Submit ID' }}</span></a>
+      </div>
 
-          <article class="card">
-            <h2>My routes</h2>
-            @if (routes().length === 0) {
-              <p class="muted">Save home → office once. Matching uses it every day.</p>
-              <a routerLink="/app/routes/new" class="btn primary sm">Add route →</a>
-            } @else {
-              @for (rt of routes().slice(0, 3); track rt.id) {
-                <div class="row">
-                  <strong>{{ rt.sourceAddress }} → {{ rt.destinationAddress }}</strong>
-                  <span>{{ rt.preferredDepartureTime }} · ±{{ rt.maximumTimeToleranceMinutes }}m</span>
-                </div>
-              }
-              <a routerLink="/app/routes" class="link">All routes →</a>
-            }
-          </article>
-
-          <article class="card span2">
-            <h2>Open ride requests</h2>
-            @if (requests().length === 0) {
-              <p class="muted">No open requests. Start from Find a ride.</p>
-            } @else {
-              @for (req of requests().slice(0, 5); track req.id) {
-                <a class="ride-row" [routerLink]="['/app/rides', req.id, 'matches']">
-                  <div>
-                    <strong>{{ req.sourceAddress || 'Route' }} → {{ req.destinationAddress || '' }}</strong>
-                    <span>{{ req.travelDate }} · {{ req.preferredDepartureTime }}</span>
-                  </div>
-                  <em>{{ req.status }}</em>
-                </a>
-              }
-            }
-          </article>
-
-          <article class="card span2">
-            <h2>Upcoming rides (as passenger)</h2>
-            @if (passengerRides().length === 0) {
-              <p class="muted">No upcoming rides. After you accept a match and confirm, they show here.</p>
-            } @else {
-              @for (r of passengerRides(); track r.id) {
-                <a class="ride-row" [routerLink]="['/app/rides/lifecycle', r.id]">
-                  <div>
-                    <strong>{{ r.sourceAddress }} → {{ r.destinationAddress }}</strong>
-                    <span>{{ r.travelDate }} · {{ r.scheduledDepartureTime }}</span>
-                  </div>
-                  <em>{{ r.status }}</em>
-                </a>
-              }
-            }
-          </article>
-
-          <article class="card">
-            <h2>Quick actions</h2>
-            <div class="actions">
-              <a routerLink="/app/rides/find" class="chip">Find ride</a>
-              <a routerLink="/app/routes" class="chip">Routes</a>
-              <a routerLink="/app/rides/lifecycle" class="chip">My rides</a>
-              <a routerLink="/app/wallet" class="chip">Wallet</a>
-              <a routerLink="/app/safety" class="chip">Safety / SOS</a>
-            </div>
-          </article>
-
-          <article class="card">
-            <h2>Tips for passengers</h2>
-            <ol class="tips">
-              <li>Save your route once (source + destination).</li>
-              <li>Find ride → accept match → confirm.</li>
-              <li>Use Safety for women-only and SOS on active rides.</li>
-            </ol>
-          </article>
-        </section>
+      @if (loadError()) {
+        <p class="warn">{{ loadError() }}</p>
       }
     </div>
   `,
   styles: [`
-    .page { max-width: 1100px; margin: 0 auto; padding: 0.5rem 0 2rem; }
+    .dash { padding-top: 0.5rem; }
     .hero {
       display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem;
-      padding: 1.4rem 1.5rem; border-radius: 1.25rem; margin-bottom: 1.25rem;
-      border: 1px solid rgba(255,255,255,0.1);
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 18px;
+      padding: 1.25rem 1.35rem; box-shadow: 0 8px 24px rgba(15,23,42,0.05);
+      margin-bottom: 1rem;
     }
-    .hero.driver { background: linear-gradient(135deg, rgba(91,140,255,0.2), rgba(15,23,42,0.9)); }
-    .hero.passenger { background: linear-gradient(135deg, rgba(124,92,255,0.22), rgba(15,23,42,0.9)); }
-    .eyebrow { margin: 0; font-size: 0.72rem; letter-spacing: 0.12em; color: #93c5fd; font-weight: 700; }
-    .hero.passenger .eyebrow { color: #c4b5fd; }
-    h1 { margin: 0.25rem 0; font-size: 1.65rem; }
-    .sub { margin: 0; color: #94a3b8; max-width: 36rem; font-size: 0.92rem; }
-    .hero-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-    .btn {
-      display: inline-flex; align-items: center; padding: 0.55rem 1rem; border-radius: 999px;
-      font-weight: 600; font-size: 0.88rem; text-decoration: none; border: none; cursor: pointer;
-    }
-    .btn.primary { background: linear-gradient(135deg,#5b8cff,#7c5cff); color: #fff; }
-    .btn.ghost { background: rgba(255,255,255,0.06); color: #e2e8f0; border: 1px solid rgba(255,255,255,0.12); }
-    .btn.sm { margin-top: 0.65rem; }
-    .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1rem; }
-    .span2 { grid-column: span 2; }
-    @media (max-width: 800px) {
-      .grid { grid-template-columns: 1fr; }
-      .span2 { grid-column: span 1; }
-    }
-    .card {
-      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 1.1rem; padding: 1.15rem 1.2rem;
-    }
-    .card.accent { background: linear-gradient(160deg, rgba(124,92,255,0.18), rgba(255,255,255,0.03)); }
-    .card-top { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
-    h2 { margin: 0 0 0.65rem; font-size: 1rem; }
-    .muted { color: #94a3b8; font-size: 0.88rem; margin: 0; }
-    .pill {
-      font-size: 0.75rem; padding: 0.25rem 0.65rem; border-radius: 999px;
-      background: rgba(248,113,113,0.15); color: #fca5a5; border: 1px solid rgba(248,113,113,0.3);
-    }
-    .pill.on { background: rgba(52,211,153,0.15); color: #6ee7b7; border-color: rgba(52,211,153,0.35); }
-    .kv { list-style: none; padding: 0; margin: 0.5rem 0; }
-    .kv li { display: flex; justify-content: space-between; padding: 0.35rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 0.88rem; }
-    .kv span { color: #94a3b8; }
-    .row { padding: 0.45rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
-    .row strong { display: block; font-size: 0.9rem; }
-    .row span { font-size: 0.8rem; color: #94a3b8; }
-    .ride-row {
-      display: flex; justify-content: space-between; gap: 0.75rem; align-items: center;
-      padding: 0.65rem 0; border-bottom: 1px solid rgba(255,255,255,0.06);
-      text-decoration: none; color: inherit;
-    }
-    .ride-row strong { display: block; font-size: 0.9rem; }
-    .ride-row span { font-size: 0.8rem; color: #94a3b8; }
-    .ride-row em { font-style: normal; font-size: 0.78rem; color: #93c5fd; }
-    .link { color: #93c5fd; font-size: 0.85rem; text-decoration: none; }
-    .actions { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.45rem; }
     .chip {
-      padding: 0.4rem 0.75rem; border-radius: 999px; font-size: 0.8rem;
-      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-      color: #e2e8f0; text-decoration: none;
+      display: inline-flex; align-items: center; padding: 0.28rem 0.7rem;
+      border-radius: 999px; font-size: 0.72rem; font-weight: 800;
     }
-    .tips { margin: 0; padding-left: 1.1rem; color: #cbd5e1; font-size: 0.88rem; }
-    .tips li { margin-bottom: 0.35rem; }
+    .chip.role { background: #e8f8f1; color: #0b7f58; }
+    .chip.verified { background: #fff7cc; color: #a16207; }
+    .chip.yellow { background: #fff7cc; color: #a16207; }
+    .hero h1 { margin: 0; font-size: 1.75rem; font-weight: 800; color: #0f172a; }
+    .sub { margin: 0.35rem 0 0; color: #64748b; font-size: 0.92rem; max-width: 36rem; }
+    .hero-right {
+      display: flex; align-items: flex-start; gap: 0.65rem;
+      background: #e8f8f1; border: 1px solid #b7ebc9; border-radius: 14px;
+      padding: 0.85rem 1rem; min-width: 240px; max-width: 320px;
+    }
+    .hero-right strong { display: block; font-size: 0.9rem; color: #0f172a; }
+    .hero-right p { margin: 0.2rem 0 0; font-size: 0.78rem; color: #64748b; line-height: 1.35; }
+    .dot {
+      width: 12px; height: 12px; border-radius: 50%; background: #94a3b8; margin-top: 4px; flex-shrink: 0;
+    }
+    .dot.on {
+      background: #0d9f6e;
+      box-shadow: 0 0 0 4px rgba(13,159,110,0.2);
+    }
+
+    .stats {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.85rem;
+      margin-bottom: 1rem;
+    }
+    @media (max-width: 1000px) { .stats { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 560px) { .stats { grid-template-columns: 1fr; } }
+
+    .stat {
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 16px;
+      padding: 1rem 1.1rem; text-decoration: none; color: inherit;
+      box-shadow: 0 6px 18px rgba(15,23,42,0.04);
+      display: flex; flex-direction: column; gap: 0.45rem;
+      transition: border-color 0.15s ease;
+    }
+    .stat:hover { border-color: #0d9f6e; }
+    .stat-top { display: flex; justify-content: space-between; align-items: center; }
+    .label { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.04em; color: #64748b; }
+    .icon { font-size: 1.1rem; }
+    .pill {
+      font-size: 0.7rem; font-weight: 800; padding: 0.2rem 0.55rem;
+      border-radius: 999px; background: #f1f5f9; color: #64748b;
+    }
+    .pill.ok { background: #e8f8f1; color: #0b7f58; }
+    .pill.star { background: #fff7cc; color: #a16207; }
+    .stat h3 { margin: 0; font-size: 1.05rem; font-weight: 800; color: #0f172a; }
+    .stat h3 small { font-size: 0.85rem; font-weight: 600; color: #64748b; }
+    .meta { margin: 0; font-size: 0.82rem; color: #64748b; }
+    .rows { display: flex; flex-direction: column; gap: 0.35rem; }
+    .rows > div {
+      display: flex; justify-content: space-between; gap: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .rows span { color: #64748b; }
+    .rows strong { color: #0f172a; font-weight: 700; }
+    .tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+    .tag {
+      font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.5rem;
+      border-radius: 999px; background: #f1f5f9; color: #475569;
+    }
+    .tag.green { background: #e8f8f1; color: #0b7f58; }
+    .more { margin-top: auto; padding-top: 0.35rem; color: #0d9f6e; font-weight: 700; font-size: 0.85rem; }
+
+    .active {
+      display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem;
+      background: linear-gradient(90deg, #fff 0%, #fff8db 55%, #fff 100%);
+      border: 1px solid #f5d76e; border-radius: 16px;
+      padding: 1.1rem 1.25rem; margin-bottom: 1rem;
+    }
+    .active.soft {
+      background: #fff;
+      border-color: #b7ebc9;
+    }
+    .active h2 { margin: 0.4rem 0 0.25rem; font-size: 1.05rem; font-weight: 800; color: #0f172a; }
+    .active-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 42px; padding: 0.45rem 1rem; border-radius: 999px;
+      font-weight: 800; font-size: 0.85rem; text-decoration: none;
+    }
+    .btn.primary { background: #0d9f6e; color: #fff; }
+    .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
+    .btn.danger { background: #e11d48; color: #fff; }
+
+    .shortcuts {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem;
+    }
+    @media (max-width: 800px) { .shortcuts { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 480px) { .shortcuts { grid-template-columns: 1fr; } }
+    .shortcuts a {
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 14px;
+      padding: 0.95rem 1rem; text-decoration: none; color: inherit;
+      display: flex; flex-direction: column; gap: 0.2rem;
+    }
+    .shortcuts a:hover { border-color: #0d9f6e; }
+    .shortcuts strong { font-size: 0.95rem; color: #0f172a; }
+    .shortcuts span { font-size: 0.8rem; color: #64748b; }
+
+    .warn { margin-top: 1rem; color: #b45309; font-size: 0.85rem; }
   `]
 })
 export class DashboardHomeComponent implements OnInit {
   private auth = inject(AuthService);
-  private driverApi = inject(DriverService);
-  private vehicleApi = inject(VehicleService);
-  private routeApi = inject(RouteService);
-  private rideApi = inject(RideService);
-  private requestApi = inject(RideRequestService);
+  private http = inject(HttpClient);
 
-  driverProfile = signal<DriverProfile | null>(null);
-  vehicles = signal<Vehicle[]>([]);
-  routes = signal<RouteDto[]>([]);
-  requests = signal<RideRequestDto[]>([]);
-  allRides = signal<RideDto[]>([]);
+  private api = environment.apiUrl?.replace(/\/$/, '') || '/api/v1';
 
-  isDriver = computed(() => this.auth.hasRole('Driver') || this.auth.hasRole('Admin'));
-  firstName = computed(() => {
-    try {
-      const u = JSON.parse(localStorage.getItem('rs_user') || '{}');
-      return u.firstName || u.FirstName || 'there';
-    } catch { return 'there'; }
+  driverProfile = signal<any>(null);
+  vehicles = signal<any[]>([]);
+  routes = signal<any[]>([]);
+  rides = signal<any[]>([]);
+  isVerified = signal(false);
+  loadError = signal('');
+
+  primaryVehicle = computed(() => {
+    const list = this.vehicles();
+    if (!list.length) return null;
+    return list.find((v) => v.isPrimary || v.isActive) || list[0];
   });
 
-  driverRides = computed(() => {
-    const uid = this.userId();
-    return this.allRides().filter(r =>
-      !['Completed', 'Cancelled'].includes(r.status) &&
-      r.participants?.some(p => p.role === 'Driver' && p.userId === uid)
+  topRoute = computed(() => this.routes()[0] || null);
+  routeCount = computed(() => this.routes().length);
+  rideCount = computed(() => this.rides().length);
+
+  activeRide = computed(() => {
+    const activeStatuses = [
+      'Confirmed', 'DriverArriving', 'DriverArrived', 'InProgress',
+      'Matched', 'Matching', 'Requested'
+    ];
+    return (
+      this.rides().find((r) =>
+        activeStatuses.some(
+          (s) => String(r.status || '').toLowerCase() === s.toLowerCase()
+        )
+      ) || null
     );
   });
-
-  passengerRides = computed(() => {
-    const uid = this.userId();
-    return this.allRides().filter(r =>
-      !['Completed', 'Cancelled'].includes(r.status) &&
-      r.participants?.some(p => p.role === 'Passenger' && p.userId === uid)
-    );
-  });
-
-  private userId(): string {
-    try { return JSON.parse(localStorage.getItem('rs_user') || '{}').id || ''; }
-    catch { return ''; }
-  }
 
   ngOnInit(): void {
-    this.routeApi.getMyRoutes().pipe(catchError(() => of(null))).subscribe(r => {
-      if (r?.success && r.data) this.routes.set(r.data);
-    });
-    this.rideApi.getMy().pipe(catchError(() => of(null))).subscribe(r => {
-      if (r?.success && r.data) this.allRides.set(r.data);
-    });
+    this.safeGet(`${this.api}/drivers/me`, (d) => this.driverProfile.set(d));
+    this.safeGet(`${this.api}/vehicles`, (d) =>
+      this.vehicles.set(Array.isArray(d) ? d : d?.items || d?.data || [])
+    );
+    this.safeGet(`${this.api}/routes/my`, (d) =>
+      this.routes.set(Array.isArray(d) ? d : d?.items || [])
+    );
+    this.safeGet(`${this.api}/rides/my`, (d) =>
+      this.rides.set(Array.isArray(d) ? d : d?.items || [])
+    );
+    this.safeGet(`${this.api}/verification/me`, (d) =>
+      this.isVerified.set(!!(d?.isVerified ?? d?.data?.isVerified))
+    );
+  }
 
-    if (this.isDriver()) {
-      this.driverApi.getMe().pipe(catchError(() => of(null))).subscribe(r => {
-        if (r?.success && r.data) this.driverProfile.set(r.data);
-      });
-      this.vehicleApi.getMyVehicles().pipe(catchError(() => of(null))).subscribe(r => {
-        if (r?.success && r.data) this.vehicles.set(r.data);
-      });
-    } else {
-      this.requestApi.getMy().pipe(catchError(() => of(null))).subscribe(r => {
-        if (r?.success && r.data) this.requests.set(r.data);
-      });
-    }
+  private safeGet(url: string, apply: (data: any) => void): void {
+    this.http.get<any>(url).subscribe({
+      next: (r) => {
+        const data = r?.data !== undefined ? r.data : r;
+        apply(data);
+      },
+      error: () => {
+        /* ignore missing endpoints for role */
+      }
+    });
+  }
+
+  private user(): any {
+    const a: any = this.auth;
+    return a.currentUser?.() ?? a.user?.() ?? a.getUser?.() ?? null;
+  }
+
+  private roles(): string[] {
+    const a: any = this.auth;
+    const r = a.roles?.();
+    if (Array.isArray(r)) return r;
+    return this.user()?.roles ?? [];
+  }
+
+  firstName(): string {
+    return this.user()?.firstName || 'there';
+  }
+
+  roleLabel(): string {
+    if (this.roles().includes('Admin')) return 'ADMIN';
+    if (this.roles().includes('Driver')) return 'DRIVER';
+    return 'PASSENGER';
+  }
+
+  isAvailable(): boolean {
+    const p = this.driverProfile();
+    return !!(p?.isAvailable ?? p?.isActive);
+  }
+
+  license(): string {
+    return this.driverProfile()?.licenseNumber || this.driverProfile()?.license || '—';
+  }
+
+  experience(): string {
+    const y = this.driverProfile()?.yearsOfExperience;
+    return y != null ? `${y} yrs` : '—';
+  }
+
+  driverStatus(): string {
+    const p = this.driverProfile();
+    if (!p) return '—';
+    const s = p.verificationStatus;
+    if (s === 1 || s === 'Verified' || s === 'verified') return 'Verified';
+    if (typeof s === 'string') return s;
+    return 'Pending';
+  }
+
+  shortAddr(a?: string): string {
+    if (!a) return '—';
+    return a.length > 36 ? a.slice(0, 34) + '…' : a;
+  }
+
+  formatTime(t?: string): string {
+    if (!t) return '—';
+    // "08:00:00" or ISO
+    if (/^\d{2}:\d{2}/.test(t)) return t.slice(0, 5);
+    try {
+      const d = new Date(t);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+    } catch { /* */ }
+    return t;
   }
 }

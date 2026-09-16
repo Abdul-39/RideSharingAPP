@@ -1,142 +1,169 @@
 import { Component, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-register',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <div class="page">
-      <div class="orb o1"></div>
-      <div class="orb o2"></div>
-      <div class="card animate-in">
-        <div class="logo">RS</div>
+    <div class="auth-page">
+      <div class="auth-card">
+        <div class="brand">
+          <span class="logo">🚐</span>
+          <div>
+            <strong>RideShare.pk</strong>
+            <small>Daily Repeat Commutes</small>
+          </div>
+        </div>
         <h1>Create account</h1>
-        <p class="sub">Join verified daily commuters on your route</p>
+        <p class="sub">Join as passenger or driver for daily corridors.</p>
 
-        @if (errorMessage()) { <div class="toast err">{{ errorMessage() }}</div> }
-        @if (errors().length) {
-          <div class="toast err"><ul>@for (e of errors(); track e) { <li>{{ e }}</li> }</ul></div>
-        }
+        @if (err()) { <p class="err">{{ err() }}</p> }
+        @if (msg()) { <p class="ok">{{ msg() }}</p> }
 
-        <form [formGroup]="form" (ngSubmit)="onSubmit()">
-          <div class="row">
-            <div class="field"><label>First name</label><input formControlName="firstName" /></div>
-            <div class="field"><label>Last name</label><input formControlName="lastName" /></div>
-          </div>
-          <div class="field"><label>Email</label><input type="email" formControlName="email" /></div>
-          <div class="field"><label>Phone</label><input formControlName="phoneNumber" placeholder="03XXXXXXXXX" /></div>
-          <div class="field"><label>Password</label><input type="password" formControlName="password" /></div>
-          <div class="field"><label>Confirm password</label><input type="password" formControlName="confirmPassword" /></div>
-          <div class="row">
-            <div class="field">
-              <label>Gender</label>
-              <select formControlName="gender">
-                <option [value]="1">Male</option>
-                <option [value]="2">Female</option>
-                <option [value]="3">Other</option>
-                <option [value]="4">Prefer not to say</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Register as</label>
-              <select formControlName="role">
-                <option value="Passenger">Passenger</option>
-                <option value="Driver">Driver</option>
-              </select>
-            </div>
-          </div>
-          <button type="submit" class="btn" [disabled]="form.invalid || loading()">
-            {{ loading() ? 'Creating…' : 'Create account' }}
-          </button>
-        </form>
-        <p class="foot">Already have an account? <a routerLink="/auth">Sign in</a></p>
+        <div class="row2">
+          <label class="lbl">First name
+            <input class="inp" [(ngModel)]="firstName" name="fn" />
+          </label>
+          <label class="lbl">Last name
+            <input class="inp" [(ngModel)]="lastName" name="ln" />
+          </label>
+        </div>
+        <label class="lbl">Email
+          <input class="inp" type="email" [(ngModel)]="email" name="email" />
+        </label>
+        <label class="lbl">Phone
+          <input class="inp" [(ngModel)]="phone" name="phone" placeholder="03XXXXXXXXX" />
+        </label>
+        <div class="row2">
+          <label class="lbl">Password
+            <input class="inp" type="password" [(ngModel)]="password" name="pw" />
+          </label>
+          <label class="lbl">Confirm
+            <input class="inp" type="password" [(ngModel)]="confirm" name="cpw" />
+          </label>
+        </div>
+        <label class="lbl">Role
+          <select class="inp" [(ngModel)]="role" name="role">
+            <option value="Passenger">Passenger</option>
+            <option value="Driver">Driver</option>
+          </select>
+        </label>
+        <label class="lbl">Gender
+          <select class="inp" [(ngModel)]="gender" name="gender">
+            <option value="">Optional</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+          </select>
+        </label>
+
+        <button type="button" class="btn primary full" (click)="register()" [disabled]="busy()">
+          {{ busy() ? 'Creating…' : 'Create account' }}
+        </button>
+
+        <p class="foot">
+          Already have an account?
+          <a routerLink="/auth/login">Sign in</a>
+        </p>
       </div>
     </div>
   `,
   styles: [`
-    .page { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1.5rem; position:relative; font-family:var(--font); }
-    .orb { position:absolute; border-radius:50%; filter:blur(80px); pointer-events:none; }
-    .o1 { width:360px; height:360px; background:rgba(91,140,255,.18); top:-8%; right:-5%; }
-    .o2 { width:260px; height:260px; background:rgba(34,211,238,.1); bottom:5%; left:-5%; }
-    .card {
-      width:100%; max-width:440px; padding:2rem; position:relative; z-index:2;
-      background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:1.5rem;
-      backdrop-filter:blur(20px); box-shadow:0 24px 60px rgba(0,0,0,.4);
+    .auth-page {
+      min-height: 100vh; display: grid; place-items: center;
+      background: linear-gradient(160deg, #e8f8f1 0%, #f3faf6 40%, #fff 100%);
+      padding: 1.5rem;
     }
+    .auth-card {
+      width: 100%; max-width: 480px; background: #fff; border: 1px solid #b7ebc9;
+      border-radius: 20px; padding: 1.75rem 1.5rem;
+      box-shadow: 0 16px 40px rgba(15,23,42,0.08);
+    }
+    .brand { display: flex; align-items: center; gap: 0.65rem; margin-bottom: 1.25rem; }
     .logo {
-      width:48px; height:48px; border-radius:14px; margin-bottom:1rem;
-      background:linear-gradient(135deg,#5b8cff,#7c5cff); display:grid; place-items:center; font-weight:800;
-      box-shadow:0 8px 24px rgba(91,140,255,.35);
+      width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center;
+      background: linear-gradient(135deg, #0d9f6e, #14b8a6); font-size: 1.2rem;
     }
-    h1 { font-size:1.5rem; font-weight:800; margin-bottom:.3rem; }
-    .sub { color:#94a3b8; font-size:.88rem; margin-bottom:1.25rem; }
-    .row { display:grid; grid-template-columns:1fr 1fr; gap:.65rem; }
-    .field { margin-bottom:.75rem; }
-    label { display:block; font-size:.78rem; color:#94a3b8; margin-bottom:.3rem; }
-    input, select {
-      width:100%; padding:.75rem .9rem; border-radius:.75rem; border:1px solid rgba(255,255,255,.12);
-      background:rgba(0,0,0,.3); color:#fff; outline:none;
+    .brand strong { display: block; color: #0d9f6e; font-size: 1.1rem; }
+    .brand small { color: #64748b; font-size: 0.75rem; }
+    h1 { margin: 0; font-size: 1.45rem; font-weight: 800; }
+    .sub { margin: 0.35rem 0 1.1rem; color: #64748b; font-size: 0.9rem; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; }
+    @media (max-width: 480px) { .row2 { grid-template-columns: 1fr; } }
+    .lbl { display: block; font-size: 0.78rem; font-weight: 700; color: #64748b; margin-bottom: 0.65rem; }
+    .inp {
+      display: block; width: 100%; margin-top: 0.3rem; min-height: 46px;
+      padding: 0.55rem 0.85rem; border-radius: 12px; border: 1px solid #e2e8f0; font-size: 0.95rem;
     }
-    input:focus, select:focus { border-color:#5b8cff; box-shadow:0 0 0 3px rgba(91,140,255,.2); }
     .btn {
-      width:100%; margin-top:.85rem; padding:.9rem; border:none; border-radius:999px; font-weight:700;
-      color:#fff; cursor:pointer; background:linear-gradient(135deg,#5b8cff,#7c5cff);
-      box-shadow:0 10px 28px rgba(91,140,255,.35);
+      display: inline-flex; align-items: center; justify-content: center; min-height: 48px;
+      padding: 0.55rem 1.2rem; border-radius: 999px; font-weight: 800; border: none; cursor: pointer;
     }
-    .btn:disabled { opacity:.55; cursor:not-allowed; }
-    .foot { text-align:center; margin-top:1.1rem; font-size:.88rem; color:#94a3b8; }
-    .foot a { color:#93c5fd; font-weight:600; }
-    .toast.err {
-      background:rgba(248,113,113,.12); border:1px solid rgba(248,113,113,.3);
-      color:#fca5a5; padding:.7rem; border-radius:.65rem; margin-bottom:.75rem; font-size:.85rem;
-    }
-    ul { margin:0; padding-left:1.1rem; }
+    .btn.primary { background: #0d9f6e; color: #fff; }
+    .full { width: 100%; margin-top: 0.35rem; }
+    .foot { margin-top: 1.15rem; text-align: center; color: #64748b; font-size: 0.9rem; }
+    .foot a { color: #0d9f6e; font-weight: 700; text-decoration: none; }
+    .err { color: #e11d48; background: #fff1f2; border-radius: 10px; padding: 0.55rem 0.75rem; }
+    .ok { color: #0d9f6e; }
   `]
 })
 export class RegisterComponent {
-  private readonly fb = inject(FormBuilder);
-  private readonly auth = inject(AuthService);
-  private readonly router = inject(Router);
+  private auth = inject(AuthService);
+  private router = inject(Router);
 
-  form = this.fb.nonNullable.group({
-    firstName: ['', Validators.required],
-    lastName: ['', Validators.required],
-    email: ['', [Validators.required, Validators.email]],
-    phoneNumber: [''],
-    password: ['', [Validators.required, Validators.minLength(8)]],
-    confirmPassword: ['', Validators.required],
-    gender: [1, Validators.required],
-    role: ['Passenger' as 'Passenger' | 'Driver', Validators.required]
-  });
+  firstName = '';
+  lastName = '';
+  email = '';
+  phone = '';
+  password = '';
+  confirm = '';
+  role = 'Passenger';
+  gender = '';
+  busy = signal(false);
+  err = signal('');
+  msg = signal('');
 
-  loading = signal(false);
-  errorMessage = signal('');
-  errors = signal<string[]>([]);
-
-  onSubmit(): void {
-    if (this.form.invalid) return;
-    this.loading.set(true);
-    this.errorMessage.set('');
-    this.errors.set([]);
-    const value = this.form.getRawValue();
-    this.auth.register({ ...value, gender: Number(value.gender) }).subscribe({
-      next: res => {
-        this.loading.set(false);
-        if (res.success) this.router.navigate(['/app/dashboard']);
-        else {
-          this.errorMessage.set(res.message || 'Registration failed');
-          this.errors.set(res.errors || []);
+  register(): void {
+    this.err.set(''); this.msg.set('');
+    if (!this.email || !this.password || !this.firstName) {
+      this.err.set('Fill required fields');
+      return;
+    }
+    if (this.password !== this.confirm) {
+      this.err.set('Passwords do not match');
+      return;
+    }
+    this.busy.set(true);
+    const body = {
+      firstName: this.firstName,
+      lastName: this.lastName,
+      email: this.email,
+      phoneNumber: this.phone,
+      password: this.password,
+      confirmPassword: this.confirm,
+      role: this.role,
+      gender: this.gender || undefined
+    };
+    const a: any = this.auth;
+    const call = a.register?.(body) ?? a.signUp?.(body);
+    if (call?.subscribe) {
+      call.subscribe({
+        next: () => {
+          this.busy.set(false);
+          this.msg.set('Account created — sign in');
+          this.router.navigateByUrl('/auth/login');
+        },
+        error: (e: any) => {
+          this.busy.set(false);
+          this.err.set(e.error?.message || e.message || 'Registration failed');
         }
-      },
-      error: err => {
-        this.loading.set(false);
-        this.errorMessage.set(err.error?.message || 'Registration failed');
-        this.errors.set(err.error?.errors || []);
-      }
-    });
+      });
+    } else {
+      this.busy.set(false);
+      this.err.set('AuthService.register not found — wire to your method');
+    }
   }
 }

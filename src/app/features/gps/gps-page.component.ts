@@ -1,276 +1,434 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import {
+  Component, OnInit, OnDestroy, AfterViewInit, inject, signal,
+  ElementRef, ViewChild, NgZone
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { GeolocationService } from '../../core/services/geolocation.service';
-import { LocationApiService } from '../../core/services/location-api.service';
-import { RouteService, RouteDto } from '../../core/services/route.service';
-import { RouteMapComponent } from '../../shared/maps/route-map.component';
-import { DriverMapComponent } from '../../shared/maps/driver-map.component';
-import { ToastService } from '../../shared/services/toast.service';
+import { RouterLink } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
+
+declare const L: any;
 
 @Component({
   selector: 'app-gps-page',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouteMapComponent, DriverMapComponent],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <div class="page">
-      <header>
-        <h1>Maps & GPS</h1>
-        <p>Use GPS and your saved routes — no need to type coordinates every time.</p>
+    <div class="rs-page">
+      <header class="head">
+        <div>
+          <div class="chips">
+            <span class="chip">Maps &amp; GPS</span>
+            <span class="chip gold">OpenStreetMap · Leaflet</span>
+          </div>
+          <h1>Maps &amp; GPS</h1>
+          <p class="sub">Use saved routes — no need to type coordinates every day.</p>
+        </div>
+        <a routerLink="/app/routes" class="btn ghost">My Routes</a>
       </header>
 
-      <section class="card">
-        <h2>Current location</h2>
-        <div class="actions">
-          <button type="button" class="btn" (click)="locate()" [disabled]="locating()">
-            {{ locating() ? 'Locating…' : 'Use my location' }}
+      <div class="layout">
+        <section class="card panel">
+          <h2>Location tools</h2>
+          <button type="button" class="btn primary full" (click)="useMyLocation()" [disabled]="busy()">
+            📍 Use my location
           </button>
-          <button type="button" class="btn ghost" (click)="shareLocation()" [disabled]="!pos()">
+          <button type="button" class="btn ghost full" (click)="shareToServer()" [disabled]="lat()==null || busy()">
             Share to server
           </button>
-        </div>
-        @if (geoError()) { <p class="err">{{ geoError() }}</p> }
-        @if (actionMsg()) { <p class="ok">{{ actionMsg() }}</p> }
-        @if (pos()) {
-          <div class="grid2">
-            <div><span class="lbl">Latitude</span><strong>{{ pos()!.latitude | number:'1.5-5' }}</strong></div>
-            <div><span class="lbl">Longitude</span><strong>{{ pos()!.longitude | number:'1.5-5' }}</strong></div>
-            <div><span class="lbl">Accuracy</span><strong>{{ pos()!.accuracy | number:'1.0-0' }} m</strong></div>
-            <div><span class="lbl">Timestamp</span><strong>{{ pos()!.timestamp | date:'medium' }}</strong></div>
-          </div>
-        }
-      </section>
 
-      <section class="card">
-        <h2>Load a saved route</h2>
-        <p class="hint">Select a route — map updates automatically to that source &amp; destination.</p>
-        @if (routesLoading()) {
-          <p class="muted">Loading your routes…</p>
-        } @else if (!myRoutes().length) {
-          <p class="muted">No saved routes yet. Create one under <strong>My Routes</strong>.</p>
-        } @else {
-          <div class="load-row">
-            <select
-              [ngModel]="selectedRouteId"
-              (ngModelChange)="onRouteSelected($event)"
-              name="routePick">
-              <option value="">— Select route —</option>
-              @for (r of myRoutes(); track r.id) {
-                <option [value]="r.id">
-                  {{ r.sourceAddress }} → {{ r.destinationAddress }}
-                  ({{ r.preferredDepartureTime }})
-                </option>
+          <label class="lbl">Load my route
+            <select class="inp" [(ngModel)]="selectedRouteId" name="rt" (ngModelChange)="loadRouteOnMap()">
+              <option value="">Select saved route</option>
+              @for (r of routes(); track r.id) {
+                <option [value]="r.id">{{ r.sourceAddress }} → {{ r.destinationAddress }}</option>
               }
             </select>
-            <button type="button" class="btn" (click)="loadSelectedRoute()" [disabled]="!selectedRouteId">
-              Load on map
-            </button>
-          </div>
-          @if (loadedLabel()) {
-            <p class="ok">Showing: {{ loadedLabel() }}</p>
-          }
-        }
-      </section>
+          </label>
 
-      <section class="card">
-        <h2>Route preview</h2>
-        <div class="actions">
-          <button type="button" class="btn ghost" (click)="usePosAsSource()">Source = my location</button>
-          <button type="button" class="btn" (click)="updateRoute()">Update route map</button>
-        </div>
-        <div class="grid2 coords">
-          <label>Source lat <input type="number" step="any" [(ngModel)]="srcLat" name="srcLat" (ngModelChange)="coordsEdited()" /></label>
-          <label>Source lng <input type="number" step="any" [(ngModel)]="srcLng" name="srcLng" (ngModelChange)="coordsEdited()" /></label>
-          <label>Dest lat <input type="number" step="any" [(ngModel)]="dstLat" name="dstLat" (ngModelChange)="coordsEdited()" /></label>
-          <label>Dest lng <input type="number" step="any" [(ngModel)]="dstLng" name="dstLng" (ngModelChange)="coordsEdited()" /></label>
-        </div>
-        <p class="hint small">Prefer selecting a saved route above. Numbers are only for fine-tuning.</p>
-        <app-route-map
-          [originLat]="srcLat"
-          [originLng]="srcLng"
-          [destLat]="dstLat"
-          [destLng]="dstLng"
-          [refreshToken]="routeToken">
-        </app-route-map>
-      </section>
+          <div class="coords">
+            <div><span>Lat</span><strong>{{ lat() ?? '—' }}</strong></div>
+            <div><span>Lng</span><strong>{{ lng() ?? '—' }}</strong></div>
+          </div>
+
+          @if (routeSource()) {
+            <p class="route-line"><span class="dot g"></span> {{ routeSource() }}</p>
+          }
+          @if (routeDest()) {
+            <p class="route-line"><span class="dot d"></span> {{ routeDest() }}</p>
+          }
+
+          @if (msg()) { <p class="ok">{{ msg() }}</p> }
+          @if (err()) { <p class="err">{{ err() }}</p> }
+        </section>
+
+        <section class="card map-wrap">
+          <div class="map-shell" #shell>
+            <div #mapEl class="map-root"></div>
+          </div>
+          <div class="legend">
+            <span><i class="dot g"></i> Source</span>
+            <span><i class="dot d"></i> Destination</span>
+            <span><i class="dot m"></i> Me</span>
+          </div>
+        </section>
+      </div>
 
       <section class="card">
         <h2>Nearby drivers</h2>
-        <p class="hint">Only drivers who shared location (privacy rules) appear here.</p>
-        @if (pos()) {
-          <app-driver-map [lat]="pos()!.latitude" [lng]="pos()!.longitude" [radiusKm]="5"></app-driver-map>
-        } @else {
-          <p class="muted">Get current location first.</p>
+        <button type="button" class="btn ghost" (click)="loadNearby()" [disabled]="lat()==null || busy()">
+          Refresh nearby
+        </button>
+        @for (n of nearby(); track n.userId || n.id || $index) {
+          <div class="near">
+            <strong>{{ n.name || n.userName || 'Driver' }}</strong>
+            <span class="muted">{{ n.distanceKm != null ? (n.distanceKm | number:'1.1-1') + ' km' : '' }}</span>
+          </div>
+        } @empty {
+          <p class="muted">Share location, then refresh. Drivers who shared location may appear.</p>
         }
       </section>
     </div>
   `,
   styles: [`
-    .page { max-width: 800px; margin: 0 auto; }
-    header { margin-bottom: 1.25rem; }
-    h1 { margin: 0; font-size: 1.5rem; }
-    header p { margin: 0.3rem 0 0; color: #94a3b8; font-size: 0.9rem; }
+    .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+    .chips { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+    .chip {
+      font-size: 0.72rem; font-weight: 800; padding: 0.25rem 0.65rem; border-radius: 999px;
+      background: #e8f8f1; color: #0b7f58;
+    }
+    .chip.gold { background: #fff7cc; color: #a16207; }
+    h1 { margin: 0; font-size: 1.4rem; font-weight: 800; }
+    h2 { margin: 0 0 0.65rem; font-size: 1.05rem; font-weight: 800; }
+    .sub { margin: 0.3rem 0 0; color: #64748b; font-size: 0.9rem; }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+      gap: 0.9rem;
+      margin-bottom: 0.9rem;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+    }
     .card {
-      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 1.1rem; padding: 1.15rem; margin-bottom: 1rem;
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 16px; padding: 1.1rem;
+      box-shadow: 0 6px 18px rgba(15,23,42,0.04); margin-bottom: 0.9rem;
     }
-    h2 { margin: 0 0 0.85rem; font-size: 1rem; }
-    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.85rem; }
     .btn {
-      padding: 0.55rem 1rem; border-radius: 999px; border: none; font-weight: 600; cursor: pointer;
-      background: linear-gradient(135deg,#5b8cff,#7c5cff); color: #fff;
+      display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
+      padding: 0.5rem 1rem; border-radius: 999px; font-weight: 800; border: none; cursor: pointer;
+      text-decoration: none; margin-bottom: 0.45rem;
     }
-    .btn.ghost { background: transparent; border: 1px solid rgba(255,255,255,0.15); color: #e2e8f0; }
-    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; margin-bottom: 0.75rem; }
-    @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
-    label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem; color: #94a3b8; }
-    input, select {
-      padding: 0.55rem 0.7rem; border-radius: 0.65rem; border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.3); color: #fff;
+    .btn.primary { background: #0d9f6e; color: #fff; }
+    .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
+    .full { width: 100%; }
+    .lbl { display: block; font-size: 0.78rem; font-weight: 700; color: #64748b; margin: 0.65rem 0; }
+    .inp {
+      display: block; width: 100%; margin-top: 0.3rem; min-height: 44px;
+      padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid #e2e8f0;
     }
-    select { width: 100%; max-width: 100%; }
-    .load-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-    .load-row select { flex: 1; min-width: 200px; }
-    .lbl { display: block; font-size: 0.72rem; color: #64748b; }
-    .err { color: #fca5a5; font-size: 0.88rem; }
-    .ok { color: #6ee7b7; font-size: 0.88rem; margin-top: 0.5rem; }
-    .muted, .hint { color: #94a3b8; font-size: 0.85rem; }
-    .hint.small { font-size: 0.78rem; margin-top: -0.25rem; }
-    .coords { opacity: 0.9; }
+    .coords { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.5rem; }
+    .coords div {
+      background: #f8fafc; border-radius: 10px; padding: 0.5rem 0.65rem; font-size: 0.85rem;
+    }
+    .coords span { display: block; color: #64748b; font-size: 0.72rem; }
+    .route-line { display: flex; gap: 0.45rem; align-items: flex-start; font-size: 0.88rem; margin: 0.35rem 0; }
+    .dot {
+      width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+      margin-top: 4px; flex-shrink: 0;
+    }
+    .dot.g { background: #0d9f6e; }
+    .dot.d { background: #e11d48; }
+    .dot.m { background: #2563eb; }
+
+    /* CRITICAL: map must fill full column width */
+    .map-wrap {
+      padding: 0.75rem;
+      min-width: 0; /* grid fix */
+      width: 100%;
+    }
+    .map-shell {
+      position: relative;
+      width: 100%;
+      height: 420px;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+      background: #cfd8dc;
+    }
+    .map-root {
+      position: absolute;
+      inset: 0;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    :host ::ng-deep .leaflet-container {
+      width: 100% !important;
+      height: 100% !important;
+      background: #cfd8dc;
+    }
+    :host ::ng-deep .leaflet-tile-pane,
+    :host ::ng-deep .leaflet-map-pane {
+      width: 100%;
+    }
+
+    .legend {
+      display: flex; gap: 1rem; font-size: 0.8rem; color: #475569; margin-top: 0.55rem;
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .near {
+      display: flex; justify-content: space-between; padding: 0.55rem 0; border-bottom: 1px solid #f1f5f9;
+    }
+    .muted { color: #64748b; } .err { color: #e11d48; } .ok { color: #0d9f6e; }
   `]
 })
-export class GpsPageComponent implements OnInit {
-  private geo = inject(GeolocationService);
-  private api = inject(LocationApiService);
-  private routesApi = inject(RouteService);
-  private toast = inject(ToastService);
+export class GpsPageComponent implements OnInit, AfterViewInit, OnDestroy {
+  @ViewChild('mapEl') mapEl!: ElementRef<HTMLDivElement>;
+  @ViewChild('shell') shell!: ElementRef<HTMLDivElement>;
 
-  pos = this.geo.lastPosition;
-  geoError = this.geo.error;
-  locating = signal(false);
-  actionMsg = signal('');
-  loadedLabel = signal('');
-  routesLoading = signal(false);
-  myRoutes = signal<RouteDto[]>([]);
+  private http = inject(HttpClient);
+  private zone = inject(NgZone);
+  private api = (environment.apiUrl || '/api/v1').replace(/\/$/, '');
 
+  private map: any = null;
+  private layer: any = null;
+  private resizeObs: ResizeObserver | null = null;
+  private onWinResize = () => this.fixSize();
+
+  routes = signal<any[]>([]);
+  nearby = signal<any[]>([]);
   selectedRouteId = '';
-  srcLat = 33.6844;
-  srcLng = 73.0479;
-  dstLat = 33.6938;
-  dstLng = 73.0652;
-  routeToken = 0;
+  lat = signal<number | null>(null);
+  lng = signal<number | null>(null);
+  routeSource = signal('');
+  routeDest = signal('');
+  srcLat = signal<number | null>(null);
+  srcLng = signal<number | null>(null);
+  dstLat = signal<number | null>(null);
+  dstLng = signal<number | null>(null);
+  busy = signal(false);
+  msg = signal('');
+  err = signal('');
 
   ngOnInit(): void {
-    this.loadMyRoutes();
-  }
-
-  loadMyRoutes(): void {
-    this.routesLoading.set(true);
-    this.routesApi.getMyRoutes().subscribe({
-      next: res => {
-        this.routesLoading.set(false);
-        if (res.success && res.data) {
-          this.myRoutes.set(res.data);
-          // Auto-load first route so map is never stuck on defaults
-          if (res.data.length > 0) {
-            this.selectedRouteId = res.data[0].id;
-            this.applyRoute(res.data[0]);
-          }
-        }
-      },
-      error: () => this.routesLoading.set(false)
-    });
-  }
-
-  onRouteSelected(id: string): void {
-    this.selectedRouteId = id || '';
-    if (!id) {
-      this.loadedLabel.set('');
-      return;
-    }
-    this.loadSelectedRoute();
-  }
-
-  loadSelectedRoute(): void {
-    const id = (this.selectedRouteId || '').trim();
-    if (!id) {
-      this.toast.error('Select a route first');
-      return;
-    }
-    const r = this.myRoutes().find(x => String(x.id).toLowerCase() === id.toLowerCase());
-    if (!r) {
-      this.toast.error('Route not found in list');
-      return;
-    }
-    this.applyRoute(r);
-    this.toast.success('Route loaded on map');
-  }
-
-  private applyRoute(r: RouteDto): void {
-    this.srcLat = Number(r.sourceLatitude);
-    this.srcLng = Number(r.sourceLongitude);
-    this.dstLat = Number(r.destinationLatitude);
-    this.dstLng = Number(r.destinationLongitude);
-    this.routeToken++;
-    this.loadedLabel.set(`${r.sourceAddress} → ${r.destinationAddress}`);
-    this.actionMsg.set(`Loaded route coordinates from My Routes`);
-  }
-
-  coordsEdited(): void {
-    // User typed numbers manually — clear “loaded route” label
-    // (map updates on next “Update route map”)
-  }
-
-  locate(): void {
-    this.locating.set(true);
-    this.actionMsg.set('');
-    this.geo.getCurrentPosition().subscribe({
-      next: p => {
-        this.locating.set(false);
-        this.srcLat = p.latitude;
-        this.srcLng = p.longitude;
-        this.actionMsg.set('Location acquired (source updated)');
-        this.toast.success('Location acquired');
-      },
-      error: () => {
-        this.locating.set(false);
-        this.toast.error(this.geo.error() || 'Location failed');
+    this.http.get<any>(`${this.api}/routes/my`).subscribe({
+      next: (r) => {
+        const d = r?.data ?? r;
+        this.routes.set(Array.isArray(d) ? d : d?.items ?? []);
       }
     });
   }
 
-  usePosAsSource(): void {
-    const p = this.pos();
-    if (!p) {
-      this.toast.error('Click “Use my location” first');
-      return;
-    }
-    this.srcLat = p.latitude;
-    this.srcLng = p.longitude;
-    this.toast.success('Source = my location');
-    this.updateRoute();
+  ngAfterViewInit(): void {
+    // Layout must settle (grid column width) before Leaflet measures the container
+    requestAnimationFrame(() => {
+      setTimeout(() => this.initMap(), 80);
+    });
   }
 
-  updateRoute(): void {
-    this.routeToken++;
-    this.actionMsg.set('Updating route…');
+  ngOnDestroy(): void {
+    window.removeEventListener('resize', this.onWinResize);
+    this.resizeObs?.disconnect();
+    if (this.map) {
+      this.map.remove();
+      this.map = null;
+    }
   }
 
-  shareLocation(): void {
-    const p = this.pos();
-    if (!p) {
-      this.toast.error('Get location first');
+  private initMap(): void {
+    if (typeof L === 'undefined') {
+      this.err.set('Leaflet not loaded. Add leaflet CSS/JS in index.html');
       return;
     }
-    this.api.updateMine({
-      latitude: p.latitude,
-      longitude: p.longitude,
-      accuracyMeters: p.accuracy,
+    if (!this.mapEl?.nativeElement || this.map) return;
+
+    this.zone.runOutsideAngular(() => {
+      const el = this.mapEl.nativeElement;
+      const shell = this.shell?.nativeElement;
+      const w = Math.max(shell?.clientWidth || el.clientWidth || 600, 280);
+      const h = Math.max(shell?.clientHeight || 420, 300);
+      el.style.width = w + 'px';
+      el.style.height = h + 'px';
+
+      this.map = L.map(el, {
+        zoomControl: true,
+        preferCanvas: false
+      }).setView([33.6844, 73.0479], 12);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(this.map);
+
+      this.layer = L.layerGroup().addTo(this.map);
+
+      // Fix partial tiles after grid/layout
+      this.fixSize();
+      setTimeout(() => this.fixSize(), 150);
+      setTimeout(() => this.fixSize(), 400);
+      setTimeout(() => this.fixSize(), 800);
+
+      window.addEventListener('resize', this.onWinResize);
+
+      if (typeof ResizeObserver !== 'undefined' && shell) {
+        this.resizeObs = new ResizeObserver(() => this.fixSize());
+        this.resizeObs.observe(shell);
+      }
+    });
+  }
+
+  private fixSize(): void {
+    if (!this.map || !this.mapEl?.nativeElement) return;
+    this.zone.runOutsideAngular(() => {
+      const el = this.mapEl.nativeElement;
+      const shell = this.shell?.nativeElement;
+      const w = Math.max(shell?.clientWidth || el.parentElement?.clientWidth || 0, 280);
+      const h = Math.max(shell?.clientHeight || 420, 300);
+      el.style.width = w + 'px';
+      el.style.height = h + 'px';
+      this.map.invalidateSize(true);
+    });
+  }
+
+  private pin(color: string): any {
+    return L.divIcon({
+      className: '',
+      html: `<div style="
+        width:14px;height:14px;border-radius:50% 50% 50% 0;background:${color};
+        border:2px solid #fff;transform:rotate(-45deg);box-shadow:0 2px 5px rgba(0,0,0,.35)"></div>`,
+      iconSize: [14, 14],
+      iconAnchor: [7, 14]
+    });
+  }
+
+  private redraw(): void {
+    if (!this.map) this.initMap();
+    if (!this.map || !this.layer) return;
+
+    this.zone.runOutsideAngular(() => {
+      this.layer.clearLayers();
+      const bounds: [number, number][] = [];
+
+      const la = this.lat();
+      const ln = this.lng();
+      if (la != null && ln != null) {
+        L.marker([la, ln], { icon: this.pin('#2563eb') }).bindPopup('Me').addTo(this.layer);
+        bounds.push([la, ln]);
+      }
+
+      const sla = this.srcLat();
+      const sln = this.srcLng();
+      if (sla != null && sln != null) {
+        L.marker([sla, sln], { icon: this.pin('#0d9f6e') })
+          .bindPopup(this.routeSource() || 'Source')
+          .addTo(this.layer);
+        bounds.push([sla, sln]);
+      }
+
+      const dla = this.dstLat();
+      const dln = this.dstLng();
+      if (dla != null && dln != null) {
+        L.marker([dla, dln], { icon: this.pin('#e11d48') })
+          .bindPopup(this.routeDest() || 'Destination')
+          .addTo(this.layer);
+        bounds.push([dla, dln]);
+      }
+
+      if (sla != null && sln != null && dla != null && dln != null) {
+        L.polyline([[sla, sln], [dla, dln]], {
+          color: '#0d9f6e', weight: 4, opacity: 0.85
+        }).addTo(this.layer);
+      }
+
+      if (bounds.length > 1) {
+        this.map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+      } else if (bounds.length === 1) {
+        this.map.setView(bounds[0], 14);
+      }
+
+      this.fixSize();
+    });
+  }
+
+  useMyLocation(): void {
+    this.err.set(''); this.msg.set('');
+    if (!navigator.geolocation) {
+      this.err.set('Geolocation not supported');
+      return;
+    }
+    this.busy.set(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        this.lat.set(+pos.coords.latitude.toFixed(6));
+        this.lng.set(+pos.coords.longitude.toFixed(6));
+        this.busy.set(false);
+        this.msg.set('Location captured');
+        this.redraw();
+      },
+      () => {
+        this.busy.set(false);
+        this.err.set('Location permission denied or unavailable');
+      },
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  }
+
+  shareToServer(): void {
+    if (this.lat() == null || this.lng() == null) return;
+    this.busy.set(true);
+    this.http.post<any>(`${this.api}/locations/me`, {
+      latitude: this.lat(),
+      longitude: this.lng(),
+      accuracyMeters: 20,
       shareMode: 2
     }).subscribe({
-      next: res => res.success ? this.toast.success('Location shared') : this.toast.error(res.message),
-      error: err => this.toast.error(err.error?.message || 'Share failed')
+      next: (r) => {
+        this.busy.set(false);
+        this.msg.set(r?.message || 'Location shared');
+      },
+      error: (e) => {
+        this.busy.set(false);
+        this.err.set(e.error?.message || 'Share failed');
+      }
+    });
+  }
+
+  loadRouteOnMap(): void {
+    const r = this.routes().find((x) => String(x.id) === String(this.selectedRouteId));
+    if (!r) return;
+
+    this.routeSource.set(r.sourceAddress || '');
+    this.routeDest.set(r.destinationAddress || '');
+    this.srcLat.set(r.sourceLatitude != null ? Number(r.sourceLatitude) : null);
+    this.srcLng.set(r.sourceLongitude != null ? Number(r.sourceLongitude) : null);
+    this.dstLat.set(r.destinationLatitude != null ? Number(r.destinationLatitude) : null);
+    this.dstLng.set(r.destinationLongitude != null ? Number(r.destinationLongitude) : null);
+
+    this.msg.set('Route loaded on map');
+    this.redraw();
+  }
+
+  loadNearby(): void {
+    if (this.lat() == null) return;
+    this.busy.set(true);
+    this.http.get<any>(`${this.api}/locations/nearby`, {
+      params: {
+        latitude: String(this.lat()),
+        longitude: String(this.lng()),
+        radiusKm: '10'
+      }
+    }).subscribe({
+      next: (r) => {
+        const d = r?.data ?? r;
+        this.nearby.set(Array.isArray(d) ? d : d?.items ?? []);
+        this.busy.set(false);
+      },
+      error: () => {
+        this.busy.set(false);
+        this.msg.set('Nearby list optional — share location from two accounts to test');
+      }
     });
   }
 }

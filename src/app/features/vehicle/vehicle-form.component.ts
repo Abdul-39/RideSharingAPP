@@ -1,152 +1,159 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { VehicleService, VehicleType } from '../../core/services/vehicle.service';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-vehicle-form',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <div class="page">
-      <div class="card">
-        <div class="header">
-          <h2>{{ isEdit() ? 'Edit Vehicle' : 'Add Vehicle' }}</h2>
-          <a routerLink="/app/vehicles" class="back">← Vehicles</a>
+    <div class="rs-page">
+      <header class="head">
+        <div>
+          <div class="chips"><span class="chip">{{ id ? 'Edit' : 'Add' }} vehicle</span></div>
+          <h1>{{ id ? 'Edit vehicle' : 'Register vehicle' }}</h1>
         </div>
-        @if (error()) { <div class="alert">{{ error() }}</div> }
-        <form [formGroup]="form" (ngSubmit)="save()">
-          <div class="field">
-            <label>Vehicle Type</label>
-            <select formControlName="vehicleTypeId">
-              <option value="">Select type</option>
-              @for (t of types(); track t.id) {
-                <option [value]="t.id">{{ t.name }} ({{ t.defaultSeatingCapacity }} seats)</option>
-              }
-            </select>
-          </div>
-          <div class="row">
-            <div class="field"><label>Make</label><input formControlName="make" placeholder="Toyota" /></div>
-            <div class="field"><label>Model</label><input formControlName="model" placeholder="Corolla" /></div>
-          </div>
-          <div class="field"><label>Registration Number</label><input formControlName="registrationNumber" placeholder="ABC-123" /></div>
-          <div class="row">
-            <div class="field"><label>Color</label><input formControlName="color" /></div>
-            <div class="field"><label>Seating Capacity</label><input type="number" formControlName="seatingCapacity" min="1" /></div>
-          </div>
-          @if (isEdit()) {
-            <div class="field check">
-              <label><input type="checkbox" formControlName="isActive" /> Active</label>
-            </div>
-          }
-          <button type="submit" [disabled]="form.invalid || saving()">
-            {{ saving() ? 'Saving...' : (isEdit() ? 'Update' : 'Create') }}
-          </button>
-        </form>
-      </div>
+        <a routerLink="/app/vehicles" class="btn ghost">Back</a>
+      </header>
+
+      <section class="card">
+        @if (err()) { <p class="err">{{ err() }}</p> }
+        @if (msg()) { <p class="ok">{{ msg() }}</p> }
+
+        <label class="lbl">Vehicle type
+          <select class="inp" [(ngModel)]="vehicleTypeId" name="vt">
+            <option value="">Select</option>
+            @for (t of types(); track t.id) {
+              <option [value]="t.id">{{ t.name }}</option>
+            }
+          </select>
+        </label>
+        <div class="row2">
+          <label class="lbl">Make
+            <input class="inp" [(ngModel)]="make" name="make" placeholder="Suzuki" />
+          </label>
+          <label class="lbl">Model
+            <input class="inp" [(ngModel)]="model" name="model" placeholder="Alto" />
+          </label>
+        </div>
+        <div class="row2">
+          <label class="lbl">Registration
+            <input class="inp" [(ngModel)]="registrationNumber" name="reg" placeholder="LHR-1234" />
+          </label>
+          <label class="lbl">Color
+            <input class="inp" [(ngModel)]="color" name="color" />
+          </label>
+        </div>
+        <label class="lbl">Seating capacity
+          <input class="inp" type="number" min="1" [(ngModel)]="seatingCapacity" name="seats" />
+        </label>
+        <button type="button" class="btn primary" (click)="save()" [disabled]="busy()">
+          {{ id ? 'Update' : 'Create' }} vehicle
+        </button>
+      </section>
     </div>
   `,
   styles: [`
-    .page { min-height:100vh; background:linear-gradient(135deg,#0f172a,#1e3a8a); padding:2rem 1rem; display:flex; justify-content:center; }
-    .card { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:1rem; padding:1.75rem; width:100%; max-width:520px; color:#fff; }
-    .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; }
-    .back { color:#60a5fa; font-size:0.9rem; }
-    .row { display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; }
-    .field { margin-bottom:0.85rem; }
-    label { display:block; font-size:0.85rem; color:#cbd5e1; margin-bottom:0.3rem; }
-    input, select { width:100%; padding:0.65rem 0.85rem; border-radius:0.5rem; border:1px solid rgba(255,255,255,0.2);
-                    background:rgba(0,0,0,0.3); color:#fff; box-sizing:border-box; }
-    .check label { display:flex; align-items:center; gap:0.5rem; }
-    .check input { width:auto; }
-    button { width:100%; padding:0.8rem; border:none; border-radius:0.5rem; background:#2563eb; color:#fff; font-weight:600; cursor:pointer; }
-    button:disabled { opacity:0.6; }
-    .alert { background:rgba(239,68,68,0.2); border:1px solid #ef4444; color:#fca5a5; padding:0.75rem; border-radius:0.5rem; margin-bottom:1rem; }
+    .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+    .chip {
+      font-size: 0.72rem; font-weight: 800; padding: 0.25rem 0.65rem; border-radius: 999px;
+      background: #e8f8f1; color: #0b7f58;
+    }
+    h1 { margin: 0.35rem 0 0; font-size: 1.35rem; font-weight: 800; }
+    .card {
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 16px; padding: 1.2rem;
+      max-width: 560px; box-shadow: 0 6px 18px rgba(15,23,42,0.04);
+    }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; }
+    @media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }
+    .lbl { display: block; font-size: 0.78rem; font-weight: 700; color: #64748b; margin-bottom: 0.65rem; }
+    .inp {
+      display: block; width: 100%; margin-top: 0.3rem; min-height: 44px;
+      padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid #e2e8f0;
+    }
+    .btn {
+      display: inline-flex; align-items: center; min-height: 44px; padding: 0.5rem 1.1rem;
+      border-radius: 999px; font-weight: 800; border: none; cursor: pointer; text-decoration: none;
+    }
+    .btn.primary { background: #0d9f6e; color: #fff; margin-top: 0.35rem; }
+    .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
+    .err { color: #e11d48; } .ok { color: #0d9f6e; }
   `]
 })
 export class VehicleFormComponent implements OnInit {
-  private vehicleService = inject(VehicleService);
+  private http = inject(HttpClient);
   private route = inject(ActivatedRoute);
   private router = inject(Router);
-  private fb = inject(FormBuilder);
+  private api = (environment.apiUrl || '/api/v1').replace(/\/$/, '');
 
-  form = this.fb.nonNullable.group({
-    vehicleTypeId: ['', Validators.required],
-    make: ['', Validators.required],
-    model: ['', Validators.required],
-    registrationNumber: ['', Validators.required],
-    color: [''],
-    seatingCapacity: [4, [Validators.required, Validators.min(1)]],
-    isActive: [true]
-  });
-
-  types = signal<VehicleType[]>([]);
-  isEdit = signal(false);
-  vehicleId = signal<string | null>(null);
-  saving = signal(false);
-  error = signal('');
+  id = '';
+  types = signal<any[]>([]);
+  vehicleTypeId = '';
+  make = '';
+  model = '';
+  registrationNumber = '';
+  color = '';
+  seatingCapacity = 4;
+  busy = signal(false);
+  err = signal('');
+  msg = signal('');
 
   ngOnInit(): void {
-    this.vehicleService.getTypes().subscribe({
-      next: res => { if (res.success && res.data) this.types.set(res.data); }
+    this.id = this.route.snapshot.paramMap.get('id') || '';
+    this.http.get<any>(`${this.api}/vehicle-types`).subscribe({
+      next: (r) => {
+        const d = r?.data ?? r;
+        this.types.set(Array.isArray(d) ? d : d?.items ?? []);
+      },
+      error: () => {
+        this.types.set([
+          { id: 'car', name: 'Car' },
+          { id: 'bike', name: 'Bike' },
+          { id: 'van', name: 'Van' }
+        ]);
+      }
     });
-
-    const id = this.route.snapshot.paramMap.get('id');
-    if (id) {
-      this.isEdit.set(true);
-      this.vehicleId.set(id);
-      this.vehicleService.getById(id).subscribe({
-        next: res => {
-          if (res.success && res.data) {
-            const v = res.data;
-            this.form.patchValue({
-              vehicleTypeId: v.vehicleTypeId,
-              make: v.make,
-              model: v.model,
-              registrationNumber: v.registrationNumber,
-              color: v.color || '',
-              seatingCapacity: v.seatingCapacity,
-              isActive: v.isActive
-            });
-          } else this.error.set(res.message);
-        },
-        error: err => this.error.set(err.error?.message || 'Failed to load vehicle')
+    if (this.id) {
+      this.http.get<any>(`${this.api}/vehicles/${this.id}`).subscribe({
+        next: (r) => {
+          const d = r?.data ?? r;
+          this.vehicleTypeId = d?.vehicleTypeId || '';
+          this.make = d?.make || '';
+          this.model = d?.model || '';
+          this.registrationNumber = d?.registrationNumber || '';
+          this.color = d?.color || '';
+          this.seatingCapacity = d?.seatingCapacity ?? 4;
+        }
       });
     }
   }
 
   save(): void {
-    if (this.form.invalid) return;
-    this.saving.set(true);
-    this.error.set('');
-    const v = this.form.getRawValue();
+    this.busy.set(true); this.err.set('');
+    const headers = new HttpHeaders({ 'Content-Type': 'application/json' });
     const body = {
-      vehicleTypeId: v.vehicleTypeId,
-      make: v.make,
-      model: v.model,
-      registrationNumber: v.registrationNumber,
-      color: v.color || undefined,
-      seatingCapacity: Number(v.seatingCapacity)
+      vehicleTypeId: this.vehicleTypeId,
+      make: this.make,
+      model: this.model,
+      registrationNumber: this.registrationNumber,
+      color: this.color,
+      seatingCapacity: this.seatingCapacity
     };
-
-    if (this.isEdit() && this.vehicleId()) {
-      this.vehicleService.update(this.vehicleId()!, { ...body, isActive: v.isActive }).subscribe({
-        next: res => {
-          this.saving.set(false);
-          if (res.success) this.router.navigate(['/vehicles']);
-          else this.error.set(res.message);
-        },
-        error: err => { this.saving.set(false); this.error.set(err.error?.message || 'Update failed'); }
-      });
-    } else {
-      this.vehicleService.create(body).subscribe({
-        next: res => {
-          this.saving.set(false);
-          if (res.success) this.router.navigate(['/vehicles']);
-          else this.error.set(res.message);
-        },
-        error: err => { this.saving.set(false); this.error.set(err.error?.message || 'Create failed'); }
-      });
-    }
+    const req = this.id
+      ? this.http.put(`${this.api}/vehicles/${this.id}`, body, { headers })
+      : this.http.post(`${this.api}/vehicles`, body, { headers });
+    req.subscribe({
+      next: () => {
+        this.busy.set(false);
+        this.router.navigateByUrl('/app/vehicles');
+      },
+      error: (e) => {
+        this.busy.set(false);
+        this.err.set(e.error?.message || 'Save failed');
+      }
+    });
   }
 }

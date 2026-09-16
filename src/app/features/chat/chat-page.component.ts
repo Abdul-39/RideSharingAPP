@@ -1,181 +1,244 @@
-import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink, ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { ChatService, ChatMessageDto, ChatThreadDto } from '../../core/services/chat.service';
-import { SignalRService } from '../../core/services/signalr.service';
+import { ActivatedRoute, RouterLink } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
+import { AuthService } from '../../core/services/auth.service';
 
 @Component({
   selector: 'app-chat-page',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
-    <div class="page">
-      <header>
-        <h1>Chat</h1>
-        <p>Message only with people on your rides</p>
+    <div class="rs-page chat-page">
+      <header class="head">
+        <div>
+          <div class="chips">
+            <span class="chip">In-Ride Chat</span>
+            <span class="chip gold">Secure · Ride only</span>
+          </div>
+          <h1>Chat</h1>
+          <p class="sub">Message only people on the same confirmed ride.</p>
+        </div>
+        <a routerLink="/app/rides/lifecycle" class="btn ghost">My Rides</a>
       </header>
 
-      @if (!activeRideId()) {
-        <section class="card">
+      <div class="layout">
+        <aside class="card list">
           <h2>Conversations</h2>
-          @if (loading()) { <p class="muted">Loading…</p> }
-          @else if (!threads().length) {
-            <p class="muted">No ride chats yet. Accept a match to start chatting.</p>
-          } @else {
-            @for (t of threads(); track t.rideId) {
-              <button type="button" class="thread" (click)="openThread(t.rideId)">
-                <div>
-                  <strong>{{ t.title }}</strong>
-                  <span class="muted">{{ t.status }} · {{ t.lastMessage || 'No messages yet' }}</span>
-                </div>
-                @if (t.unreadCount > 0) {
-                  <span class="badge">{{ t.unreadCount }}</span>
-                }
-              </button>
+          @if (ridesLoading()) { <p class="muted">Loading…</p> }
+          @for (r of rides(); track r.id) {
+            <button type="button" class="ride-item" [class.on]="selectedRideId===r.id" (click)="selectRide(r.id)">
+              <strong>{{ shortRoute(r) }}</strong>
+              <span class="muted">{{ prettyStatus(r.status) }} · {{ shortId(r.id) }}</span>
+            </button>
+          } @empty {
+            @if (!ridesLoading()) {
+              <p class="muted">No rides to chat. Confirm a match first.</p>
             }
           }
+        </aside>
+
+        <section class="card thread">
+          @if (!selectedRideId) {
+            <div class="empty">
+              <p>Select a ride conversation</p>
+            </div>
+          } @else {
+            <div class="thread-head">
+              <strong>Ride {{ shortId(selectedRideId) }}</strong>
+              <a class="link" [routerLink]="['/app/rides/lifecycle', selectedRideId]">Open ride</a>
+            </div>
+            <div class="messages" #msgBox>
+              @for (m of messages(); track m.id || $index) {
+                <div class="bubble" [class.me]="isMine(m)">
+                  <p>{{ m.message || m.body || m.content }}</p>
+                  <small>{{ formatTime(m.sentAt || m.createdAt) }}</small>
+                </div>
+              } @empty {
+                <p class="muted center">No messages yet. Say salaam 👋</p>
+              }
+            </div>
+            <div class="composer">
+              <input class="inp" [(ngModel)]="draft" name="draft"
+                     placeholder="Type a message…"
+                     (keydown.enter)="send()" />
+              <button type="button" class="btn primary" (click)="send()" [disabled]="!draft.trim() || busy()">
+                Send
+              </button>
+            </div>
+            @if (err()) { <p class="err">{{ err() }}</p> }
+          }
         </section>
-      } @else {
-        <section class="card chat">
-          <div class="chat-head">
-            <button type="button" class="link" (click)="closeThread()">← Back</button>
-            <span class="muted">Ride chat</span>
-          </div>
-          <div class="msgs" #box>
-            @for (m of messages(); track m.id) {
-              <div class="bubble" [class.mine]="m.isMine">
-                <div class="meta">{{ m.isMine ? 'You' : m.senderName }} · {{ m.sentAt | date:'shortTime' }}</div>
-                <div class="text">{{ m.message }}</div>
-              </div>
-            }
-          </div>
-          <form class="composer" (ngSubmit)="send()">
-            <input [(ngModel)]="draft" name="draft" placeholder="Type a message…" maxlength="2000" />
-            <button type="submit" class="btn" [disabled]="!draft.trim() || sending()">Send</button>
-          </form>
-        </section>
-      }
+      </div>
     </div>
   `,
   styles: [`
-    .page { max-width: 720px; margin: 0 auto; }
-    header { margin-bottom: 1rem; }
-    h1 { margin: 0; font-size: 1.45rem; }
-    header p { margin: 0.25rem 0 0; color: #94a3b8; font-size: 0.9rem; }
-    .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 1.1rem; padding: 1rem; }
-    h2 { margin: 0 0 0.75rem; font-size: 1rem; }
-    .thread { width: 100%; text-align: left; display: flex; justify-content: space-between; gap: 0.75rem;
-      padding: 0.75rem; margin-bottom: 0.45rem; border-radius: 0.75rem; border: 1px solid rgba(255,255,255,0.08);
-      background: rgba(0,0,0,0.2); color: #e2e8f0; cursor: pointer; }
-    .thread strong { display: block; font-size: 0.9rem; }
-    .badge { background: #5b8cff; color: #fff; border-radius: 999px; padding: 0.15rem 0.5rem; font-size: 0.75rem; height: fit-content; }
-    .muted { color: #94a3b8; font-size: 0.8rem; }
-    .chat { display: flex; flex-direction: column; min-height: 420px; }
-    .chat-head { display: flex; justify-content: space-between; margin-bottom: 0.5rem; }
-    .link { background: none; border: none; color: #93c5fd; cursor: pointer; }
-    .msgs { flex: 1; overflow-y: auto; max-height: 360px; display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.75rem; }
-    .bubble { max-width: 80%; padding: 0.55rem 0.75rem; border-radius: 0.85rem; background: rgba(255,255,255,0.06); }
-    .bubble.mine { align-self: flex-end; background: rgba(91,140,255,0.25); }
-    .meta { font-size: 0.7rem; color: #94a3b8; margin-bottom: 0.2rem; }
-    .composer { display: flex; gap: 0.5rem; }
-    .composer input { flex: 1; padding: 0.6rem 0.75rem; border-radius: 0.75rem; border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.3); color: #fff; }
-    .btn { padding: 0.55rem 1rem; border: none; border-radius: 999px; font-weight: 600; cursor: pointer;
-      background: linear-gradient(135deg,#5b8cff,#7c5cff); color: #fff; }
-    .btn:disabled { opacity: 0.5; }
+    .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+    .chips { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+    .chip {
+      font-size: 0.72rem; font-weight: 800; padding: 0.25rem 0.65rem; border-radius: 999px;
+      background: #e8f8f1; color: #0b7f58;
+    }
+    .chip.gold { background: #fff7cc; color: #a16207; }
+    h1 { margin: 0; font-size: 1.4rem; font-weight: 800; }
+    h2 { margin: 0 0 0.65rem; font-size: 0.95rem; font-weight: 800; }
+    .sub { margin: 0.3rem 0 0; color: #64748b; font-size: 0.9rem; }
+    .layout { display: grid; grid-template-columns: 280px 1fr; gap: 0.9rem; min-height: 520px; }
+    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+    .card {
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 16px; padding: 1rem;
+      box-shadow: 0 6px 18px rgba(15,23,42,0.04);
+    }
+    .list { max-height: 560px; overflow: auto; }
+    .ride-item {
+      display: flex; flex-direction: column; gap: 0.15rem; width: 100%; text-align: left;
+      border: 1px solid #e2e8f0; background: #fafdfb; border-radius: 12px;
+      padding: 0.75rem; margin-bottom: 0.45rem; cursor: pointer;
+    }
+    .ride-item.on { border-color: #0d9f6e; background: #e8f8f1; }
+    .thread { display: flex; flex-direction: column; min-height: 520px; }
+    .thread-head {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-bottom: 0.65rem; border-bottom: 1px solid #f1f5f9; margin-bottom: 0.65rem;
+    }
+    .link { color: #0d9f6e; font-weight: 700; font-size: 0.85rem; text-decoration: none; }
+    .messages {
+      flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem;
+      padding: 0.25rem 0 0.75rem; max-height: 380px;
+    }
+    .bubble {
+      max-width: 75%; padding: 0.65rem 0.85rem; border-radius: 14px 14px 14px 4px;
+      background: #f1f5f9; align-self: flex-start;
+    }
+    .bubble.me {
+      background: #0d9f6e; color: #fff; align-self: flex-end; border-radius: 14px 14px 4px 14px;
+    }
+    .bubble p { margin: 0; font-size: 0.92rem; line-height: 1.4; }
+    .bubble small { display: block; margin-top: 0.25rem; opacity: 0.75; font-size: 0.7rem; }
+    .composer { display: flex; gap: 0.45rem; margin-top: auto; }
+    .inp {
+      flex: 1; min-height: 46px; padding: 0.55rem 0.85rem; border-radius: 999px;
+      border: 1px solid #e2e8f0; font-size: 0.95rem;
+    }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; min-height: 46px;
+      padding: 0.5rem 1.15rem; border-radius: 999px; font-weight: 800; border: none; cursor: pointer;
+      text-decoration: none;
+    }
+    .btn.primary { background: #0d9f6e; color: #fff; }
+    .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
+    .empty { flex: 1; display: grid; place-items: center; color: #94a3b8; }
+    .center { text-align: center; }
+    .muted { color: #64748b; font-size: 0.82rem; }
+    .err { color: #e11d48; margin-top: 0.35rem; }
   `]
 })
 export class ChatPageComponent implements OnInit, OnDestroy {
-  private chat = inject(ChatService);
-  private signalR = inject(SignalRService);
-  private route = inject(ActivatedRoute);
-  private router = inject(Router);
+  @ViewChild('msgBox') msgBox?: ElementRef<HTMLDivElement>;
 
-  threads = signal<ChatThreadDto[]>([]);
-  messages = signal<ChatMessageDto[]>([]);
-  loading = signal(false);
-  sending = signal(false);
-  activeRideId = signal<string | null>(null);
+  private http = inject(HttpClient);
+  private route = inject(ActivatedRoute);
+  private auth = inject(AuthService);
+  private api = (environment.apiUrl || '/api/v1').replace(/\/$/, '');
+  private poll: any;
+
+  rides = signal<any[]>([]);
+  messages = signal<any[]>([]);
+  ridesLoading = signal(true);
+  selectedRideId = '';
   draft = '';
-  private sub: { unsubscribe(): void } | null = null;
+  busy = signal(false);
+  err = signal('');
 
   ngOnInit(): void {
-    this.loadThreads();
-    const id = this.route.snapshot.paramMap.get('rideId');
-    if (id) this.openThread(id);
-    void this.signalR.connect().catch(() => {});
+    const q = this.route.snapshot.queryParamMap.get('rideId')
+      || this.route.snapshot.paramMap.get('rideId')
+      || this.route.snapshot.paramMap.get('id');
+    this.http.get<any>(`${this.api}/rides/my`).subscribe({
+      next: (r) => {
+        const d = r?.data ?? r;
+        const list = Array.isArray(d) ? d : d?.items ?? [];
+        this.rides.set(list);
+        this.ridesLoading.set(false);
+        if (q) this.selectRide(q);
+        else if (list[0]?.id) this.selectRide(list[0].id);
+      },
+      error: () => this.ridesLoading.set(false)
+    });
   }
 
   ngOnDestroy(): void {
-    this.teardown();
+    if (this.poll) clearInterval(this.poll);
   }
 
-  loadThreads(): void {
-    this.loading.set(true);
-    this.chat.getThreads().subscribe({
-      next: res => {
-        this.loading.set(false);
-        if (res.success && res.data) this.threads.set(res.data);
+  selectRide(id: string): void {
+    this.selectedRideId = id;
+    this.loadMessages();
+    if (this.poll) clearInterval(this.poll);
+    this.poll = setInterval(() => this.loadMessages(true), 5000);
+  }
+
+  loadMessages(silent = false): void {
+    if (!this.selectedRideId) return;
+    this.http.get<any>(`${this.api}/chats/${this.selectedRideId}`).subscribe({
+      next: (r) => {
+        const d = r?.data ?? r;
+        const list = Array.isArray(d) ? d : d?.messages ?? d?.items ?? [];
+        this.messages.set(list);
+        setTimeout(() => {
+          const el = this.msgBox?.nativeElement;
+          if (el) el.scrollTop = el.scrollHeight;
+        }, 30);
       },
-      error: () => this.loading.set(false)
-    });
-  }
-
-  openThread(rideId: string): void {
-    this.teardown();
-    this.activeRideId.set(rideId);
-    this.router.navigate(['/app/chat', rideId], { replaceUrl: true });
-    this.chat.getMessages(rideId).subscribe({
-      next: res => {
-        if (res.success && res.data) this.messages.set(res.data);
-        this.chat.markRead(rideId).subscribe();
+      error: () => {
+        if (!silent) this.err.set('Could not load messages');
       }
     });
-    void this.signalR.joinRide(rideId).catch(() => {});
-    this.sub = this.signalR.chatMessage$.subscribe((m: any) => {
-      if (String(m.rideId).toLowerCase() !== rideId.toLowerCase()) return;
-      this.messages.update(list => {
-        if (list.some(x => x.id === m.id)) return list;
-        return [...list, {
-          id: m.id, rideId: m.rideId, senderId: m.senderId, senderName: m.senderName,
-          receiverId: m.receiverId, message: m.message, sentAt: m.sentAt, isRead: m.isRead,
-          isMine: !!m.isMine
-        }];
-      });
-    });
-  }
-
-  closeThread(): void {
-    const id = this.activeRideId();
-    if (id) void this.signalR.leaveRide(id);
-    this.teardown();
-    this.activeRideId.set(null);
-    this.messages.set([]);
-    this.router.navigate(['/app/chat']);
-    this.loadThreads();
   }
 
   send(): void {
-    const id = this.activeRideId();
     const text = this.draft.trim();
-    if (!id || !text) return;
-    this.sending.set(true);
-    this.chat.send(id, text).subscribe({
-      next: res => {
-        this.sending.set(false);
-        if (res.success && res.data) {
-          this.messages.update(list => [...list, res.data!]);
-          this.draft = '';
-        }
+    if (!text || !this.selectedRideId) return;
+    this.busy.set(true); this.err.set('');
+    this.http.post<any>(`${this.api}/chats/${this.selectedRideId}/messages`, { message: text }).subscribe({
+      next: () => {
+        this.draft = '';
+        this.busy.set(false);
+        this.loadMessages();
       },
-      error: () => this.sending.set(false)
+      error: (e) => {
+        this.busy.set(false);
+        this.err.set(e.error?.message || 'Send failed');
+      }
     });
   }
 
-  private teardown(): void {
-    this.sub?.unsubscribe();
-    this.sub = null;
+  isMine(m: any): boolean {
+    const a: any = this.auth;
+    const u = a.currentUser?.() ?? a.user?.() ?? a.getUser?.();
+    const myId = u?.id || u?.userId;
+    return myId && (m.senderId === myId || m.userId === myId);
+  }
+
+  shortId(id?: string): string {
+    if (!id) return '—';
+    return id.length > 8 ? id.slice(0, 8) : id;
+  }
+
+  shortRoute(r: any): string {
+    const s = r.sourceAddress || r.route?.sourceAddress || 'Ride';
+    return s.length > 28 ? s.slice(0, 26) + '…' : s;
+  }
+
+  prettyStatus(s?: string): string {
+    return String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2') || '—';
+  }
+
+  formatTime(t?: string): string {
+    if (!t) return '';
+    try { return new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+    catch { return t; }
   }
 }

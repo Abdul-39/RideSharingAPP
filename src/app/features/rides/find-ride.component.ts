@@ -1,136 +1,355 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
-import { RouteDto, RouteService } from '../../core/services/route.service';
-import { RideRequestService } from '../../core/services/ride-request.service';
+import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-find-ride',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, ],
   template: `
-    <div class="page">
-      <div class="card">
-        <div class="header">
-          <h2>Find a Ride</h2>
-          <a routerLink="/app/rides" class="back">My Requests</a>
+    <div class="rs-page">
+      <header class="head">
+        <div>
+          <div class="chips">
+            <span class="chip">Find Daily Commute</span>
+            <span class="chip gold">Save up to 60%</span>
+          </div>
+          <h1>Find Ride</h1>
+          <p class="sub">Match daily repeat commuters &amp; verified institutional drivers.</p>
         </div>
-        @if (error()) { <div class="alert">{{ error() }}</div> }
-        <form [formGroup]="form" (ngSubmit)="submit()">
-          <div class="field">
-            <label>Your Route *</label>
-            <select formControlName="routeId">
-              <option value="">Select route</option>
-              @for (r of routes(); track r.id) {
-                <option [value]="r.id">{{ r.sourceAddress }} → {{ r.destinationAddress }} ({{ r.preferredDepartureTime }})</option>
+      </header>
+
+      <div class="layout">
+        <section class="panel">
+          <h2>Request a match</h2>
+
+          <label class="lbl">Use saved route
+            <select class="inp" [(ngModel)]="selectedRouteId" name="route" (ngModelChange)="onRoutePick()">
+              <option value="">Select route (recommended)</option>
+              @for (r of myRoutes(); track r.id) {
+                <option [value]="r.id">{{ r.sourceAddress }} → {{ r.destinationAddress }}</option>
               }
             </select>
+          </label>
+
+          <label class="lbl">Pickup
+            <input class="inp" [(ngModel)]="sourceAddress" name="src" placeholder="Source address" />
+          </label>
+          <label class="lbl">Destination
+            <input class="inp" [(ngModel)]="destAddress" name="dst" placeholder="Destination address" />
+          </label>
+
+          <div class="row2">
+            <label class="lbl">Date
+              <input class="inp" type="date" [(ngModel)]="rideDate" name="date" />
+            </label>
+            <label class="lbl">Departure
+              <input class="inp" type="time" [(ngModel)]="departureTime" name="time" />
+            </label>
           </div>
-          <div class="row">
-            <div class="field"><label>Travel Date *</label><input type="date" formControlName="travelDate" /></div>
-            <div class="field"><label>Departure Time *</label><input type="time" formControlName="preferredDepartureTime" /></div>
+
+          <div class="row2">
+            <label class="lbl">Seats needed
+              <select class="inp" [(ngModel)]="seats" name="seats">
+                <option [ngValue]="1">1</option>
+                <option [ngValue]="2">2</option>
+                <option [ngValue]="3">3</option>
+                <option [ngValue]="4">4</option>
+              </select>
+            </label>
+            <label class="lbl">Gender preference
+              <select class="inp" [(ngModel)]="genderPref" name="gp">
+                <option value="Any">Any Commuters</option>
+                <option value="WomenOnly">Women Only</option>
+                <option value="MenOnly">Men Only</option>
+              </select>
+            </label>
           </div>
-          <div class="row">
-            <div class="field"><label>Seats Needed *</label><input type="number" formControlName="seatsNeeded" min="1" max="10" /></div>
-            <div class="field"><label>Tolerance (min)</label><input type="number" formControlName="timeToleranceMinutes" min="0" max="120" /></div>
-          </div>
-          <div class="field">
-            <label>Gender Preference</label>
-            <select formControlName="genderPreference">
-              <option [value]="0">Any</option>
-              <option [value]="1">Male only</option>
-              <option [value]="2">Female only (Women-only)</option>
-            </select>
-          </div>
-          <div class="field"><label>Notes</label><input formControlName="notes" /></div>
-          <button type="submit" [disabled]="form.invalid || saving()">
-            {{ saving() ? 'Creating...' : 'Create Request & Find Matches' }}
+
+          @if (err()) { <p class="err">{{ err() }}</p> }
+          @if (msg()) { <p class="ok">{{ msg() }}</p> }
+
+          <button type="button" class="btn primary full" (click)="search()" [disabled]="busy()">
+            ✨ Search Repeat Commuter Matches
           </button>
-        </form>
+        </section>
+
+        <section class="panel results">
+          <div class="res-head">
+            <h2>Available matches</h2>
+            <span class="chip">{{ matches().length }} found</span>
+          </div>
+
+          @if (busy()) { <p class="muted">Searching…</p> }
+
+          @for (m of matches(); track trackMatch(m)) {
+            <article class="match">
+              <div class="match-top">
+                <div class="avatar">{{ initials(m) }}</div>
+                <div class="info">
+                  <strong>{{ matchName(m) }}</strong>
+                  @if (m.isVerified || m.matchedUserIsVerified) {
+                    <span class="chip">Verified</span>
+                  }
+                  <p class="muted">{{ vehicleLabel(m) }}</p>
+                </div>
+                <div class="score">
+                  <span class="pct">{{ scoreLabel(m) }}</span>
+                  <span class="muted">match</span>
+                </div>
+              </div>
+              <p class="muted">
+                Departure {{ formatTime(m.departureTime || m.preferredDepartureTime) }}
+                @if (m.matchScore != null) { · score {{ m.matchScore | number:'1.0-2' }} }
+              </p>
+              <div class="match-actions">
+                <button type="button" class="btn primary" (click)="accept(m)" [disabled]="busy()">Accept Match</button>
+                <button type="button" class="btn ghost" (click)="reject(m)" [disabled]="busy()">Reject</button>
+              </div>
+            </article>
+          } @empty {
+            @if (!busy()) {
+              <p class="muted">No matches yet. Select a route, set date/time, then search.</p>
+            }
+          }
+        </section>
       </div>
     </div>
   `,
   styles: [`
-    .page { min-height:100vh; background:linear-gradient(135deg,#0f172a,#1e3a8a); padding:2rem 1rem; display:flex; justify-content:center; color:#fff; }
-    .card { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:1rem; padding:1.75rem; width:100%; max-width:520px; }
-    .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
-    .back { color:#60a5fa; font-size:0.9rem; }
-    .row { display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; }
-    .field { margin-bottom:0.85rem; }
-    label { display:block; font-size:0.85rem; color:#cbd5e1; margin-bottom:0.3rem; }
-    input, select { width:100%; padding:0.65rem; border-radius:0.5rem; border:1px solid rgba(255,255,255,0.2);
-                    background:rgba(0,0,0,0.3); color:#fff; box-sizing:border-box; }
-    button { width:100%; padding:0.85rem; border:none; border-radius:0.5rem; background:#2563eb; color:#fff; font-weight:600; cursor:pointer; }
-    button:disabled { opacity:0.6; }
-    .alert { background:rgba(239,68,68,0.2); border:1px solid #ef4444; color:#fca5a5; padding:0.75rem; border-radius:0.5rem; margin-bottom:1rem; }
+    .head { margin-bottom: 1rem; }
+    .chips { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+    .chip {
+      font-size: 0.72rem; font-weight: 800; padding: 0.25rem 0.65rem; border-radius: 999px;
+      background: #e8f8f1; color: #0b7f58;
+    }
+    .chip.gold { background: #fff7cc; color: #a16207; }
+    h1 { margin: 0; font-size: 1.45rem; font-weight: 800; }
+    h2 { margin: 0 0 0.75rem; font-size: 1.05rem; font-weight: 800; }
+    .sub { margin: 0.3rem 0 0; color: #64748b; font-size: 0.9rem; }
+    .layout { display: grid; grid-template-columns: 1fr 1.1fr; gap: 1rem; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+    .panel {
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 16px;
+      padding: 1.15rem; box-shadow: 0 6px 18px rgba(15,23,42,0.04);
+    }
+    .lbl { display: block; margin-bottom: 0.65rem; font-size: 0.78rem; font-weight: 700; color: #64748b; }
+    .inp {
+      display: block; width: 100%; margin-top: 0.3rem; min-height: 44px;
+      padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid #e2e8f0;
+      font-size: 0.95rem; background: #fff; color: #0f172a;
+    }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; }
+    @media (max-width: 500px) { .row2 { grid-template-columns: 1fr; } }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+      min-height: 44px; padding: 0.5rem 1rem; border-radius: 999px; border: none;
+      font-weight: 800; font-size: 0.88rem; cursor: pointer;
+    }
+    .btn.primary { background: #0d9f6e; color: #fff; }
+    .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .full { width: 100%; margin-top: 0.35rem; }
+    .res-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .match {
+      border: 1px solid #e2e8f0; border-radius: 14px; padding: 0.9rem; margin-bottom: 0.65rem;
+      background: #fafdfb;
+    }
+    .match-top { display: flex; gap: 0.65rem; align-items: flex-start; margin-bottom: 0.35rem; }
+    .avatar {
+      width: 42px; height: 42px; border-radius: 999px; background: #0d9f6e; color: #fff;
+      display: grid; place-items: center; font-weight: 800; flex-shrink: 0;
+    }
+    .info { flex: 1; min-width: 0; }
+    .info strong { margin-right: 0.35rem; }
+    .score { text-align: right; }
+    .pct { display: block; font-weight: 800; color: #0d9f6e; font-size: 1.05rem; }
+    .match-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+    .muted { color: #64748b; font-size: 0.85rem; margin: 0.15rem 0; }
+    .err { color: #e11d48; } .ok { color: #0d9f6e; }
   `]
 })
 export class FindRideComponent implements OnInit {
-  private routeService = inject(RouteService);
-  private rideService = inject(RideRequestService);
+  private http = inject(HttpClient);
   private router = inject(Router);
-  private fb = inject(FormBuilder);
+  private api = (environment.apiUrl || '/api/v1').replace(/\/$/, '');
 
-  routes = signal<RouteDto[]>([]);
-  saving = signal(false);
-  error = signal('');
-
-  form = this.fb.nonNullable.group({
-    routeId: ['', Validators.required],
-    travelDate: ['', Validators.required],
-    preferredDepartureTime: ['08:00', Validators.required],
-    seatsNeeded: [1, [Validators.required, Validators.min(1)]],
-    timeToleranceMinutes: [15, [Validators.min(0), Validators.max(120)]],
-    genderPreference: [0],
-    notes: ['']
-  });
+  myRoutes = signal<any[]>([]);
+  matches = signal<any[]>([]);
+  selectedRouteId = '';
+  sourceAddress = '';
+  destAddress = '';
+  rideDate = '';
+  departureTime = '08:00';
+  seats = 1;
+  genderPref = 'Any';
+  requestId = '';
+  busy = signal(false);
+  err = signal('');
+  msg = signal('');
 
   ngOnInit(): void {
-    this.routeService.getMyRoutes().subscribe({
-      next: res => { if (res.success && res.data) this.routes.set(res.data); }
-    });
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    this.form.patchValue({ travelDate: tomorrow.toISOString().substring(0, 10) });
-  }
-
-  submit(): void {
-    if (this.form.invalid) return;
-    this.saving.set(true);
-    this.error.set('');
-    const v = this.form.getRawValue();
-    this.rideService.create({
-      routeId: v.routeId,
-      travelDate: v.travelDate,
-      preferredDepartureTime: v.preferredDepartureTime,
-      seatsNeeded: Number(v.seatsNeeded),
-      genderPreference: Number(v.genderPreference),
-      timeToleranceMinutes: Number(v.timeToleranceMinutes),
-      notes: v.notes || undefined
-    }).subscribe({
-      next: res => {
-        if (!res.success || !res.data) {
-          this.saving.set(false);
-          this.error.set(res.message);
-          return;
-        }
-        const id = res.data.id;
-        this.rideService.runMatch(id).subscribe({
-          next: () => {
-            this.saving.set(false);
-            this.router.navigate(['/rides', id, 'matches']);
-          },
-          error: err => {
-            this.saving.set(false);
-            this.router.navigate(['/rides', id, 'matches']);
-          }
-        });
-      },
-      error: err => {
-        this.saving.set(false);
-        this.error.set(err.error?.message || 'Failed');
+    const t = new Date();
+    this.rideDate = t.toISOString().slice(0, 10);
+    this.http.get<any>(`${this.api}/routes/my`).subscribe({
+      next: (r) => {
+        const data = r?.data ?? r;
+        this.myRoutes.set(Array.isArray(data) ? data : data?.items ?? []);
       }
     });
+  }
+
+  onRoutePick(): void {
+    const r = this.myRoutes().find((x) => String(x.id) === String(this.selectedRouteId));
+    if (!r) return;
+    this.sourceAddress = r.sourceAddress || '';
+    this.destAddress = r.destinationAddress || '';
+    if (r.preferredDepartureTime) {
+      const t = String(r.preferredDepartureTime);
+      this.departureTime = /^\d{2}:\d{2}/.test(t) ? t.slice(0, 5) : this.departureTime;
+    }
+  }
+
+  search(): void {
+    this.err.set('');
+    this.msg.set('');
+    if (!this.selectedRouteId && (!this.sourceAddress || !this.destAddress)) {
+      this.err.set('Select a saved route or enter source and destination.');
+      return;
+    }
+    this.busy.set(true);
+    this.matches.set([]);
+
+    const body: any = {
+      routeId: this.selectedRouteId || undefined,
+      date: this.rideDate,
+      preferredDepartureTime: this.departureTime?.length === 5 ? this.departureTime + ':00' : this.departureTime,
+      seatsRequired: this.seats,
+      numberOfSeats: this.seats,
+      genderPreference: this.genderPref
+    };
+
+    this.http.post<any>(`${this.api}/ride-requests`, body).subscribe({
+      next: (r) => {
+        const data = r?.data ?? r;
+        this.requestId = data?.id || data?.rideRequestId || '';
+        this.msg.set(r?.message || 'Request created. Loading matches…');
+        this.loadMatches();
+      },
+      error: (e) => {
+        this.busy.set(false);
+        this.err.set(e.error?.message || 'Could not create ride request');
+      }
+    });
+  }
+
+  loadMatches(): void {
+    if (!this.requestId) {
+      this.busy.set(false);
+      return;
+    }
+    // try common endpoints
+    const urls = [
+      `${this.api}/ride-requests/${this.requestId}/matches`,
+      `${this.api}/rides/${this.requestId}/matches`,
+      `${this.api}/matching/${this.requestId}`
+    ];
+    const tryUrl = (i: number) => {
+      if (i >= urls.length) {
+        this.busy.set(false);
+        this.msg.set('Request created. Open Match Results from My Rides if list is empty.');
+        return;
+      }
+      this.http.get<any>(urls[i]).subscribe({
+        next: (r) => {
+          const data = r?.data ?? r;
+          const list = Array.isArray(data) ? data : data?.matches || data?.items || [];
+          this.matches.set(list);
+          this.busy.set(false);
+          if (!list.length) this.msg.set('No matches found for this window. Try ±15 min or another route.');
+        },
+        error: () => tryUrl(i + 1)
+      });
+    };
+    tryUrl(0);
+  }
+
+  accept(m: any): void {
+    const matchId = m.id || m.matchId;
+    if (!matchId) return;
+    this.busy.set(true);
+    this.http.post<any>(`${this.api}/ride-matches/${matchId}/accept`, {}).subscribe({
+      next: () => {
+        this.busy.set(false);
+        this.msg.set('Match accepted');
+        this.router.navigateByUrl('/app/rides/lifecycle');
+      },
+      error: (e) => {
+        // alternate path
+        this.http.post<any>(`${this.api}/rides/matches/${matchId}/accept`, {}).subscribe({
+          next: () => {
+            this.busy.set(false);
+            this.router.navigateByUrl('/app/rides/lifecycle');
+          },
+          error: (e2) => {
+            this.busy.set(false);
+            this.err.set(e2.error?.message || e.error?.message || 'Accept failed');
+          }
+        });
+      }
+    });
+  }
+
+  reject(m: any): void {
+    const matchId = m.id || m.matchId;
+    if (!matchId) return;
+    this.http.post(`${this.api}/ride-matches/${matchId}/reject`, {}).subscribe({
+      next: () => this.matches.update((list) => list.filter((x) => (x.id || x.matchId) !== matchId)),
+      error: () => this.matches.update((list) => list.filter((x) => (x.id || x.matchId) !== matchId))
+    });
+  }
+
+  trackMatch(m: any): string {
+    return String(m.id || m.matchId || m.matchedUserId || Math.random());
+  }
+
+  matchName(m: any): string {
+    return (
+      m.matchedUserName ||
+      m.driverName ||
+      m.userName ||
+      `${m.firstName || ''} ${m.lastName || ''}`.trim() ||
+      'Commuter'
+    );
+  }
+
+  initials(m: any): string {
+    const n = this.matchName(m);
+    return n.split(/\s+/).slice(0, 2).map((s) => s[0]?.toUpperCase() || '').join('') || 'C';
+  }
+
+  vehicleLabel(m: any): string {
+    const v = m.vehicle || {};
+    const parts = [m.vehicleLabel, v.make, v.model, v.registrationNumber || m.registrationNumber]
+      .filter(Boolean);
+    return parts.join(' ') || 'Vehicle details after accept';
+  }
+
+  scoreLabel(m: any): string {
+    const s = m.matchScore ?? m.score;
+    if (s == null) return '—';
+    const n = Number(s);
+    if (n <= 1) return `${Math.round(n * 100)}%`;
+    if (n <= 100) return `${Math.round(n)}%`;
+    return String(s);
+  }
+
+  formatTime(t?: string): string {
+    if (!t) return '—';
+    if (/^\d{2}:\d{2}/.test(t)) return t.slice(0, 5);
+    return t;
   }
 }

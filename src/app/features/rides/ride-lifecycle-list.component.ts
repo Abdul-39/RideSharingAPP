@@ -1,157 +1,218 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink, ActivatedRoute } from '@angular/router';
-import { RideDto, RideService } from '../../core/services/ride.service';
+import { RouterLink } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../environments/environment';
+
+type Tab = 'upcoming' | 'active' | 'history';
 
 @Component({
   selector: 'app-ride-lifecycle-list',
   standalone: true,
   imports: [CommonModule, RouterLink],
   template: `
-    <div class="page">
-      <div class="orb"></div>
-      <div class="wrap">
-        <header class="head animate-in">
-          <div>
-            <h1>{{ title() }}</h1>
-            <p>Track upcoming, active, and past rides</p>
+    <div class="rs-page">
+      <header class="head">
+        <div>
+          <div class="chips">
+            <span class="chip">Ride Lifecycle</span>
+            <span class="chip gold">PIN OTP Protected</span>
           </div>
-          <a routerLink="/" class="home">Home</a>
-        </header>
-
-        <div class="tabs animate-in animate-in-delay-1">
-          <a routerLink="/app/rides/lifecycle" [queryParams]="{filter:'upcoming'}" class="tab" [class.on]="filter()==='upcoming'">Upcoming</a>
-          <a routerLink="/app/rides/lifecycle" [queryParams]="{filter:'active'}" class="tab" [class.on]="filter()==='active'">Active</a>
-          <a routerLink="/app/rides/lifecycle" [queryParams]="{filter:'history'}" class="tab" [class.on]="filter()==='history'">History</a>
+          <h1>My Rides &amp; Lifecycle</h1>
+          <p class="sub">Upcoming schedules, active transit cockpit, and completed commute history.</p>
         </div>
+        <a routerLink="/app/rides/find" class="btn primary">Find Ride</a>
+      </header>
 
-        @if (error()) { <div class="toast err animate-in">{{ error() }}</div> }
+      <div class="tabs">
+        <button type="button" [class.on]="tab()==='upcoming'" (click)="tab.set('upcoming')">
+          Upcoming <span class="n">{{ upcoming().length }}</span>
+        </button>
+        <button type="button" [class.on]="tab()==='active'" (click)="tab.set('active')">
+          Active <span class="n">{{ active().length }}</span>
+        </button>
+        <button type="button" [class.on]="tab()==='history'" (click)="tab.set('history')">
+          History <span class="n">{{ history().length }}</span>
+        </button>
+      </div>
 
-        @if (loading()) {
-          <div class="loader"><div class="spinner"></div></div>
-        } @else if (!items().length) {
-          <div class="empty glass animate-in">
-            <div class="empty-icon">🚗</div>
-            <h3>No rides here yet</h3>
-            <p>When you accept a match, your rides will show up here.</p>
-            <a routerLink="/app/rides/find" class="btn">Find a ride</a>
-          </div>
-        } @else {
-          <div class="grid">
-            @for (r of items(); track r.id; let i = $index) {
-              <a class="ride-card glass animate-in" [style.animation-delay.ms]="i * 60"
-                 [routerLink]="['/app/rides/lifecycle', r.id]">
-                <div class="rc-top">
-                  <span class="badge" [attr.data-s]="r.status">{{ r.status }}</span>
-                  <span class="arrow">→</span>
-                </div>
-                <h3>{{ r.sourceAddress }}</h3>
-                <p class="to">to {{ r.destinationAddress }}</p>
-                <div class="meta">
-                  <span>📅 {{ r.travelDate }}</span>
-                  <span>🕐 {{ r.scheduledDepartureTime }}</span>
-                </div>
-              </a>
-            }
-          </div>
+      @if (err()) { <p class="err">{{ err() }}</p> }
+      @if (loading()) { <p class="muted">Loading rides…</p> }
+
+      <div class="list">
+        @for (r of visible(); track r.id) {
+          <article class="card" [class.active-card]="isActiveStatus(r.status)">
+            <div class="top">
+              <span class="status" [attr.data-s]="r.status">{{ prettyStatus(r.status) }}</span>
+              <span class="id">Ride #{{ shortId(r.id) }}</span>
+              @if (r.startPin || r.otp || r.tripPin) {
+                <span class="otp">PIN {{ r.startPin || r.otp || r.tripPin }}</span>
+              }
+            </div>
+            <h2>{{ src(r) }} → {{ dst(r) }}</h2>
+            <p class="meta">
+              {{ formatWhen(r) }}
+              @if (r.fare != null) { · Rs. {{ r.fare }} }
+            </p>
+            <div class="actions">
+              <a class="btn primary" [routerLink]="['/app/rides/lifecycle', r.id]">Open details</a>
+              <a class="btn ghost" routerLink="/app/chat" [queryParams]="{ rideId: r.id }">Chat</a>
+              @if (isActiveStatus(r.status)) {
+                <a class="btn danger" routerLink="/app/safety">SOS</a>
+              }
+            </div>
+          </article>
+        } @empty {
+          @if (!loading()) {
+            <div class="empty card">
+              <h3>No rides in this tab</h3>
+              <p class="muted">Create a request from Find Ride or wait for a match confirmation.</p>
+              <a routerLink="/app/rides/find" class="btn primary">Find Ride</a>
+            </div>
+          }
         }
       </div>
     </div>
   `,
   styles: [`
-    .page { min-height: 100vh; padding: 1.5rem 1rem 3rem; position: relative; font-family: var(--font); }
-    .orb {
-      position: absolute; width: 360px; height: 360px; border-radius: 50%;
-      background: rgba(91,140,255,0.12); filter: blur(80px); top: -80px; left: -60px; pointer-events: none;
+    .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+    .chips { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+    .chip {
+      font-size: 0.72rem; font-weight: 800; padding: 0.25rem 0.65rem; border-radius: 999px;
+      background: #e8f8f1; color: #0b7f58;
     }
-    .wrap { max-width: 960px; margin: 0 auto; position: relative; z-index: 2; }
-    .head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.25rem; gap: 1rem; }
-    .head h1 { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.02em; }
-    .head p { color: #94a3b8; font-size: 0.9rem; margin-top: 0.25rem; }
-    .home {
-      padding: 0.45rem 0.9rem; border-radius: 999px; font-size: 0.85rem;
-      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #e2e8f0;
-    }
+    .chip.gold { background: #fff7cc; color: #a16207; }
+    h1 { margin: 0; font-size: 1.45rem; font-weight: 800; }
+    .sub { margin: 0.3rem 0 0; color: #64748b; font-size: 0.9rem; }
     .tabs {
-      display: inline-flex; gap: 0.35rem; padding: 0.3rem;
-      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 999px; margin-bottom: 1.5rem;
+      display: flex; gap: 0.35rem; background: #fff; border: 1px solid #e2e8f0;
+      border-radius: 999px; padding: 0.3rem; margin-bottom: 1rem; width: fit-content; flex-wrap: wrap;
     }
-    .tab {
-      padding: 0.5rem 1.1rem; border-radius: 999px; font-size: 0.85rem; font-weight: 500;
-      color: #94a3b8; transition: all 0.2s;
+    .tabs button {
+      border: none; background: transparent; padding: 0.45rem 0.95rem; border-radius: 999px;
+      font-weight: 800; font-size: 0.85rem; color: #64748b; cursor: pointer;
     }
-    .tab.on {
-      background: linear-gradient(135deg, #5b8cff, #7c5cff); color: #fff;
-      box-shadow: 0 6px 18px rgba(91,140,255,0.3);
+    .tabs button.on { background: #0d9f6e; color: #fff; }
+    .tabs .n {
+      display: inline-grid; place-items: center; min-width: 1.25rem; height: 1.25rem;
+      margin-left: 0.25rem; border-radius: 999px; background: rgba(0,0,0,0.08);
+      font-size: 0.7rem;
     }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
-    .ride-card {
-      display: block; padding: 1.25rem; transition: transform 0.25s, border-color 0.25s;
-      text-decoration: none; color: inherit;
+    .tabs button.on .n { background: rgba(255,255,255,0.25); }
+    .list { display: flex; flex-direction: column; gap: 0.75rem; }
+    .card {
+      background: #fff; border: 1px solid #b7ebc9; border-radius: 16px; padding: 1.1rem 1.15rem;
+      box-shadow: 0 6px 18px rgba(15,23,42,0.04);
     }
-    .ride-card:hover { transform: translateY(-4px); border-color: rgba(91,140,255,0.35); }
-    .rc-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.85rem; }
-    .badge {
-      font-size: 0.72rem; font-weight: 700; padding: 0.25rem 0.65rem; border-radius: 999px;
-      background: rgba(91,140,255,0.2); color: #bfdbfe;
+    .active-card {
+      border-color: #f5d76e;
+      background: linear-gradient(90deg, #fff 0%, #fffdf3 100%);
     }
-    .badge[data-s="Completed"] { background: rgba(52,211,153,0.2); color: #6ee7b7; }
-    .badge[data-s="InProgress"], .badge[data-s="DriverArriving"], .badge[data-s="DriverArrived"] {
-      background: rgba(34,211,238,0.2); color: #a5f3fc;
+    .top { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; margin-bottom: 0.4rem; }
+    .status {
+      font-size: 0.72rem; font-weight: 800; padding: 0.25rem 0.65rem; border-radius: 999px;
+      background: #e8f8f1; color: #0b7f58;
     }
-    .arrow { color: #475569; font-size: 1.1rem; transition: transform 0.2s; }
-    .ride-card:hover .arrow { transform: translateX(4px); color: #5b8cff; }
-    .ride-card h3 { font-size: 1.05rem; margin-bottom: 0.2rem; }
-    .to { color: #94a3b8; font-size: 0.88rem; margin-bottom: 0.85rem; }
-    .meta { display: flex; gap: 0.85rem; font-size: 0.8rem; color: #64748b; }
-    .empty {
-      text-align: center; padding: 3rem 1.5rem; max-width: 400px; margin: 2rem auto;
+    .id { font-size: 0.78rem; color: #94a3b8; margin-right: auto; }
+    .otp {
+      font-weight: 800; font-size: 0.8rem; padding: 0.3rem 0.7rem; border-radius: 10px;
+      background: #fff7cc; color: #92400e; border: 1px solid #f5d76e; letter-spacing: 0.08em;
     }
-    .empty-icon { font-size: 2.5rem; margin-bottom: 0.75rem; }
-    .empty h3 { margin-bottom: 0.4rem; }
-    .empty p { color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.25rem; }
+    h2 { margin: 0 0 0.3rem; font-size: 1.05rem; font-weight: 800; color: #0f172a; }
+    .meta { margin: 0 0 0.75rem; color: #64748b; font-size: 0.88rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
     .btn {
-      display: inline-block; padding: 0.7rem 1.4rem; border-radius: 999px; font-weight: 600;
-      background: linear-gradient(135deg, #5b8cff, #7c5cff); color: #fff;
+      display: inline-flex; align-items: center; justify-content: center; min-height: 42px;
+      padding: 0.45rem 1rem; border-radius: 999px; font-weight: 800; font-size: 0.85rem;
+      text-decoration: none; border: none; cursor: pointer;
     }
-    .loader { display: flex; justify-content: center; padding: 3rem; }
-    .spinner {
-      width: 36px; height: 36px; border: 3px solid rgba(255,255,255,0.1);
-      border-top-color: #5b8cff; border-radius: 50%; animation: spin 0.8s linear infinite;
-    }
-    .toast.err {
-      background: rgba(248,113,113,0.12); border: 1px solid rgba(248,113,113,0.3);
-      color: #fca5a5; padding: 0.85rem; border-radius: 0.85rem; margin-bottom: 1rem;
-    }
+    .btn.primary { background: #0d9f6e; color: #fff; }
+    .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
+    .btn.danger { background: #e11d48; color: #fff; }
+    .empty { text-align: center; padding: 2rem 1rem; }
+    .muted { color: #64748b; } .err { color: #e11d48; }
   `]
 })
 export class RideLifecycleListComponent implements OnInit {
-  private rideService = inject(RideService);
-  private route = inject(ActivatedRoute);
-  items = signal<RideDto[]>([]);
+  private http = inject(HttpClient);
+  private api = (environment.apiUrl || '/api/v1').replace(/\/$/, '');
+
+  rides = signal<any[]>([]);
   loading = signal(true);
-  error = signal('');
-  filter = signal('upcoming');
-  title = signal('Upcoming Rides');
+  err = signal('');
+  tab = signal<Tab>('active');
+
+  private activeSet = new Set([
+    'confirmed', 'driverarriving', 'driverarrived', 'inprogress',
+    'matched', 'matching'
+  ]);
+  private histSet = new Set(['completed', 'cancelled', 'canceled']);
+
+  upcoming = computed(() =>
+    this.rides().filter((r) => {
+      const s = String(r.status || '').toLowerCase();
+      return s === 'requested' || s === 'matched' || s === 'confirmed';
+    })
+  );
+  active = computed(() =>
+    this.rides().filter((r) => this.isActiveStatus(r.status))
+  );
+  history = computed(() =>
+    this.rides().filter((r) => this.histSet.has(String(r.status || '').toLowerCase()))
+  );
+  visible = computed(() => {
+    const t = this.tab();
+    if (t === 'upcoming') return this.upcoming();
+    if (t === 'history') return this.history();
+    return this.active();
+  });
 
   ngOnInit(): void {
-    this.route.queryParamMap.subscribe(q => {
-      const f = q.get('filter') || 'upcoming';
-      this.filter.set(f);
-      this.title.set(f === 'active' ? 'Active Rides' : f === 'history' ? 'Ride History' : 'Upcoming Rides');
-      this.loading.set(true);
-      this.rideService.getMy(f).subscribe({
-        next: res => {
-          this.loading.set(false);
-          if (res.success && res.data) this.items.set(res.data);
-          else this.error.set(res.message);
-        },
-        error: err => {
-          this.loading.set(false);
-          this.error.set(err.error?.message || 'Failed to load');
-        }
-      });
+    this.http.get<any>(`${this.api}/rides/my`).subscribe({
+      next: (r) => {
+        const data = r?.data ?? r;
+        this.rides.set(Array.isArray(data) ? data : data?.items ?? []);
+        this.loading.set(false);
+        if (this.active().length) this.tab.set('active');
+        else if (this.upcoming().length) this.tab.set('upcoming');
+        else this.tab.set('history');
+      },
+      error: (e) => {
+        this.err.set(e.error?.message || 'Could not load rides');
+        this.loading.set(false);
+      }
     });
+  }
+
+  isActiveStatus(status?: string): boolean {
+    const s = String(status || '').toLowerCase().replace(/\s/g, '');
+    return this.activeSet.has(s) || s === 'driverarriving' || s === 'driverarrived';
+  }
+
+  prettyStatus(s?: string): string {
+    if (!s) return 'Unknown';
+    return String(s).replace(/([a-z])([A-Z])/g, '$1 $2');
+  }
+
+  shortId(id?: string): string {
+    if (!id) return '—';
+    return id.length > 8 ? id.slice(0, 8) : id;
+  }
+
+  src(r: any): string {
+    return r.sourceAddress || r.routeSource || r.route?.sourceAddress || 'Source';
+  }
+  dst(r: any): string {
+    return r.destinationAddress || r.routeDestination || r.route?.destinationAddress || 'Destination';
+  }
+
+  formatWhen(r: any): string {
+    const t = r.scheduledAt || r.departureTime || r.preferredDepartureTime || r.createdAt;
+    if (!t) return '';
+    try {
+      const d = new Date(t);
+      if (!isNaN(d.getTime())) return d.toLocaleString();
+    } catch { /* */ }
+    return String(t);
   }
 }

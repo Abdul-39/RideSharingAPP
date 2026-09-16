@@ -1,224 +1,425 @@
-import { Component, OnInit, OnDestroy, inject, signal, HostListener } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import { NotificationService } from '../core/services/notification.service';
-import { SignalRService } from '../core/services/signalr.service';
+import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { AuthService } from '../core/services/auth.service';
-import { ToastContainerComponent } from '../shared/components/toast-container.component';
-import { ConfirmDialogComponent } from '../shared/components/confirm-dialog.component';
+import { RsIconComponent } from '../shared/rs-icon.component';
 
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive, ToastContainerComponent, ConfirmDialogComponent],
+  imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive, RsIconComponent],
   template: `
     <div class="shell">
-      <header class="topbar">
-        <a routerLink="/app/dashboard" class="brand">
-          <span class="logo">RS</span>
-          <span class="brand-name">RideSharing</span>
-        </a>
+      <header class="top">
+        <!-- Brand row -->
+        <div class="bar">
+          <a routerLink="/app/dashboard" class="brand">
+            <span class="logo">
+              <app-rs-icon name="logo" [size]="20" color="#fff"></app-rs-icon>
+            </span>
+            <span class="brand-text">
+              <strong>RideShare.pk</strong>
+              <small>Daily Repeat Commutes</small>
+            </span>
+          </a>
 
-        <button type="button" class="menu-btn" (click)="menuOpen.set(!menuOpen())" aria-label="Menu">
-          <span></span><span></span><span></span>
-        </button>
+          <div class="bar-right">
+            <span class="role-pill">{{ roleLabel() }}</span>
 
-        <nav class="nav-desktop">
-          @for (item of navItems(); track item.path) {
-            <a [routerLink]="item.path" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: item.exact === true }">
-              {{ item.label }}
-              @if (item.path === '/app/notifications' && unread() > 0) {
-                <span class="nbadge">{{ unread() > 9 ? '9+' : unread() }}</span>
-              }
-            </a>
-          }
-          <span class="user-chip">{{ auth.currentUser()?.firstName }} · {{ roleLabel() }}</span>
-          <button type="button" class="logout" (click)="logout()">Logout</button>
-        </nav>
+            <!-- Desktop tools -->
+            <div class="tools desk">
+              <a routerLink="/app/safety" class="btn-sos" title="Emergency SOS">
+                <app-rs-icon name="shield" [size]="15" color="#fff"></app-rs-icon>
+                <span>SOS</span>
+              </a>
+              <a routerLink="/app/wallet" class="btn-chip" title="Wallet">
+                <app-rs-icon name="wallet" [size]="15"></app-rs-icon>
+                <span>Wallet</span>
+              </a>
+              <a routerLink="/app/notifications" class="btn-icon" title="Notifications">
+                <app-rs-icon name="bell" [size]="17"></app-rs-icon>
+              </a>
+              <div class="profile">
+                <span class="avatar">{{ initials() }}</span>
+                <div class="profile-meta">
+                  <strong>{{ displayName() }}</strong>
+                  <small>{{ roleLabel() }}</small>
+                </div>
+                <button type="button" class="btn-chip" (click)="logout()" title="Logout">
+                  <app-rs-icon name="logout" [size]="14"></app-rs-icon>
+                  <span>Logout</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mobile tools strip -->
+        <div class="tools mob">
+          <a routerLink="/app/safety" class="btn-sos">
+            <app-rs-icon name="shield" [size]="14" color="#fff"></app-rs-icon>
+            SOS
+          </a>
+          <a routerLink="/app/wallet" class="btn-chip">
+            <app-rs-icon name="wallet" [size]="14"></app-rs-icon>
+            Wallet
+          </a>
+          <a routerLink="/app/notifications" class="btn-icon">
+            <app-rs-icon name="bell" [size]="16"></app-rs-icon>
+          </a>
+          <span class="avatar sm">{{ initials() }}</span>
+          <button type="button" class="btn-chip" (click)="logout()">
+            <app-rs-icon name="logout" [size]="14"></app-rs-icon>
+          </button>
+        </div>
       </header>
 
-      @if (menuOpen()) {
-        <div class="drawer-backdrop" (click)="menuOpen.set(false)"></div>
-        <nav class="drawer">
-          @for (item of navItems(); track item.path) {
-            <a [routerLink]="item.path" routerLinkActive="active"
-               [routerLinkActiveOptions]="{ exact: item.exact === true }"
-               (click)="menuOpen.set(false)">{{ item.label }}</a>
-          }
-          <button type="button" class="logout block" (click)="logout()">Logout</button>
-        </nav>
-      }
-
-      <main class="content">
-        <router-outlet />
-      </main>
-
-      <nav class="bottom-nav">
-        @for (item of mobileNav(); track item.path) {
-          <a [routerLink]="item.path" routerLinkActive="active"
-             [routerLinkActiveOptions]="{ exact: item.exact === true }">
-            <span class="ico">{{ item.icon }}</span>
-            <span>{{ item.label }}</span>
+      <nav class="tabs" aria-label="Main navigation">
+        @for (t of tabs(); track t.path) {
+          <a [routerLink]="t.path" routerLinkActive="active">
+            <app-rs-icon [name]="t.icon" [size]="14"></app-rs-icon>
+            <span>{{ t.label }}</span>
           </a>
         }
       </nav>
 
-      <app-toast-container />
-      <app-confirm-dialog />
+      <main class="main">
+        <router-outlet />
+      </main>
     </div>
   `,
   styles: [`
-    .shell { min-height: 100vh; background: #060b18; color: #f1f5f9; padding-bottom: 4.5rem; }
-    @media (min-width: 900px) { .shell { padding-bottom: 0; } }
+    :host { display: block; }
 
-    .topbar {
-      position: sticky; top: 0; z-index: 50;
-      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-      padding: 0.75rem 1.1rem;
-      background: rgba(6,11,24,0.85); backdrop-filter: blur(14px);
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+    .shell {
+      min-height: 100vh;
+      background: linear-gradient(180deg, #eefaf4 0%, #f3faf6 120px, #f8fafc 100%);
+      max-width: 100vw;
+      overflow-x: hidden;
     }
-    .brand { display: flex; align-items: center; gap: 0.55rem; text-decoration: none; color: inherit; }
+
+    /* ========== HEADER ========== */
+    .top {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(13, 159, 110, 0.12);
+      box-shadow: 0 4px 24px rgba(15, 23, 42, 0.04);
+      padding: 0.65rem 0.85rem 0.55rem;
+    }
+
+    .bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.65rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      text-decoration: none;
+      color: inherit;
+      min-width: 0;
+    }
+
     .logo {
-      width: 36px; height: 36px; border-radius: 10px;
-      background: linear-gradient(135deg,#5b8cff,#7c5cff);
-      display: grid; place-items: center; font-weight: 800; font-size: 0.8rem;
-      box-shadow: 0 6px 18px rgba(91,140,255,0.35);
+      width: 40px;
+      height: 40px;
+      border-radius: 13px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #0d9f6e 0%, #12b981 55%, #14b8a6 100%);
+      box-shadow:
+        0 4px 12px rgba(13, 159, 110, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      flex-shrink: 0;
     }
-    .brand-name { font-weight: 700; letter-spacing: -0.02em; }
 
-    .nav-desktop { display: none; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
-    @media (min-width: 900px) { .nav-desktop { display: flex; } .menu-btn { display: none; } }
-    .nav-desktop a {
-      padding: 0.4rem 0.75rem; border-radius: 999px; font-size: 0.82rem; font-weight: 500;
-      color: #94a3b8; text-decoration: none; transition: 0.15s;
+    .brand-text strong {
+      display: block;
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(90deg, #0b7f58, #0d9f6e);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
     }
-    .nbadge {
-      margin-left: 0.25rem; background: #ef4444; color: #fff; border-radius: 999px;
-      font-size: 0.65rem; padding: 0.05rem 0.35rem; font-weight: 700;
+    .brand-text small {
+      display: block;
+      color: #64748b;
+      font-size: 0.68rem;
+      font-weight: 600;
+      margin-top: 1px;
     }
-    .nav-desktop a:hover, .nav-desktop a.active {
-      color: #fff; background: rgba(91,140,255,0.18);
-    }
-    .user-chip {
-      margin-left: 0.35rem; padding: 0.3rem 0.7rem; border-radius: 999px;
-      font-size: 0.75rem; background: rgba(255,255,255,0.06); color: #cbd5e1;
-    }
-    .logout {
-      margin-left: 0.25rem; padding: 0.4rem 0.85rem; border-radius: 999px;
-      border: 1px solid rgba(255,255,255,0.12); background: transparent; color: #e2e8f0;
-      cursor: pointer; font-size: 0.82rem;
-    }
-    .logout.block { width: 100%; margin: 0.75rem 0 0; }
 
-    .menu-btn {
-      display: flex; flex-direction: column; gap: 5px; background: none; border: none; cursor: pointer; padding: 0.4rem;
+    .bar-right {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-shrink: 0;
     }
-    .menu-btn span { display: block; width: 22px; height: 2px; background: #e2e8f0; border-radius: 2px; }
 
-    .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 60; }
-    .drawer {
-      position: fixed; top: 0; right: 0; bottom: 0; width: min(280px, 85vw); z-index: 70;
-      background: #0c1224; border-left: 1px solid rgba(255,255,255,0.08);
-      padding: 1.25rem; display: flex; flex-direction: column; gap: 0.35rem;
-      animation: slide 0.2s ease;
+    .role-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.32rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      color: #0b7f58;
+      background: linear-gradient(180deg, #f0fdf6, #e8f8f1);
+      border: 1px solid #b7ebc9;
+      box-shadow: 0 1px 2px rgba(13, 159, 110, 0.08);
+      white-space: nowrap;
     }
-    .drawer a {
-      padding: 0.75rem 0.9rem; border-radius: 0.75rem; color: #cbd5e1; text-decoration: none; font-weight: 500;
-    }
-    .drawer a.active, .drawer a:hover { background: rgba(91,140,255,0.15); color: #fff; }
 
-    .content { max-width: 1100px; margin: 0 auto; padding: 1.25rem 1rem 2rem; }
-
-    .bottom-nav {
-      position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
-      display: flex; justify-content: space-around;
-      background: rgba(8,13,28,0.94); backdrop-filter: blur(12px);
-      border-top: 1px solid rgba(255,255,255,0.08); padding: 0.4rem 0.25rem calc(0.4rem + env(safe-area-inset-bottom));
+    /* Buttons */
+    .btn-sos {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.45rem 0.85rem;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #e11d48, #f43f5e);
+      color: #fff !important;
+      font-weight: 800;
+      font-size: 0.72rem;
+      letter-spacing: 0.02em;
+      text-decoration: none;
+      box-shadow: 0 4px 14px rgba(225, 29, 72, 0.35);
+      white-space: nowrap;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
-    @media (min-width: 900px) { .bottom-nav { display: none; } }
-    .bottom-nav a {
-      display: flex; flex-direction: column; align-items: center; gap: 0.15rem;
-      font-size: 0.68rem; color: #64748b; text-decoration: none; padding: 0.35rem 0.5rem; min-width: 3.5rem;
-    }
-    .bottom-nav a.active { color: #93c5fd; }
-    .bottom-nav .ico { font-size: 1.15rem; }
+    .btn-sos:active { transform: scale(0.97); }
 
-    @keyframes slide { from { transform: translateX(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .btn-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.42rem 0.8rem;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      color: #0f172a;
+      font-weight: 700;
+      font-size: 0.78rem;
+      text-decoration: none;
+      cursor: pointer;
+      font-family: inherit;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+      white-space: nowrap;
+    }
+    .btn-chip:hover {
+      border-color: #b7ebc9;
+      background: #f0fdf6;
+    }
+
+    .btn-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      color: #334155;
+      text-decoration: none;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+      flex-shrink: 0;
+    }
+    .btn-icon:hover {
+      border-color: #b7ebc9;
+      color: #0d9f6e;
+      background: #f0fdf6;
+    }
+
+    .profile {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding-left: 0.35rem;
+      border-left: 1px solid #eef2f7;
+      margin-left: 0.15rem;
+    }
+
+    .avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 0.72rem;
+      color: #fff;
+      background: linear-gradient(145deg, #0d9f6e, #14b8a6);
+      box-shadow: 0 2px 8px rgba(13, 159, 110, 0.3);
+      flex-shrink: 0;
+    }
+    .avatar.sm { width: 34px; height: 34px; }
+
+    .profile-meta strong {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.2;
+    }
+    .profile-meta small {
+      color: #64748b;
+      font-size: 0.68rem;
+      font-weight: 600;
+    }
+
+    /* Desktop / mobile tools visibility */
+    .tools.desk { display: none; align-items: center; gap: 0.4rem; }
+    .tools.mob {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-top: 0.55rem;
+      padding-top: 0.55rem;
+      border-top: 1px solid #f1f5f9;
+    }
+
+    /* ========== TABS ========== */
+    .tabs {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 0.35rem;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      padding: 0.55rem 0.75rem 0.65rem;
+      background: rgba(255, 255, 255, 0.85);
+      border-bottom: 1px solid rgba(13, 159, 110, 0.08);
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+
+    .tabs a {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.32rem;
+      flex: 0 0 auto;
+      white-space: nowrap;
+      padding: 0.48rem 0.85rem;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #64748b;
+      text-decoration: none;
+      background: #fff;
+      border: 1px solid #eef2f7;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+      transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+    .tabs a:hover {
+      color: #0d9f6e;
+      border-color: #c6f0d8;
+      background: #f0fdf6;
+    }
+    .tabs a.active {
+      color: #0b7f58;
+      background: linear-gradient(180deg, #e8f8f1, #dcf7ea);
+      border-color: #86efac;
+      box-shadow: 0 2px 8px rgba(13, 159, 110, 0.15);
+    }
+
+    .main {
+      min-height: 50vh;
+      padding: 0.85rem 0.75rem 1.5rem;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    /* ========== DESKTOP ========== */
+    @media (min-width: 900px) {
+      .top { padding: 0.75rem 1.25rem 0.65rem; }
+      .logo { width: 44px; height: 44px; border-radius: 14px; }
+      .brand-text strong { font-size: 1.1rem; }
+      .brand-text small { font-size: 0.72rem; }
+      .tools.desk { display: flex; }
+      .tools.mob { display: none; }
+      .tabs { padding: 0.55rem 1.25rem 0.7rem; gap: 0.4rem; }
+      .tabs a { font-size: 0.82rem; padding: 0.5rem 0.95rem; }
+      .main { padding: 1.1rem 1.25rem 2rem; }
+    }
+
+    @media (max-width: 380px) {
+      .brand-text small { display: none; }
+      .role-pill { padding: 0.28rem 0.55rem; font-size: 0.68rem; }
+    }
   `]
 })
-export class AppShellComponent implements OnInit, OnDestroy {
-  auth = inject(AuthService);
-  private notifApi = inject(NotificationService);
-  private signalR = inject(SignalRService);
-  unread = this.notifApi.unreadCount;
-  menuOpen = signal(false);
-  private notifSub: { unsubscribe(): void } | null = null;
+export class AppShellComponent {
+  private auth = inject(AuthService);
+  private router = inject(Router);
 
-  ngOnInit(): void {
-    this.notifApi.refreshUnread();
-    void this.signalR.connect().catch(() => {});
-    this.notifSub = this.signalR.userNotification$.subscribe(() => this.notifApi.refreshUnread());
+  private roles(): string[] {
+    const a: any = this.auth;
+    const fromSignal = a.roles?.();
+    if (Array.isArray(fromSignal)) return fromSignal;
+    const u = a.currentUser?.() ?? a.user?.() ?? a.getUser?.();
+    return u?.roles ?? [];
   }
 
-  ngOnDestroy(): void {
-    this.notifSub?.unsubscribe();
-  }
+  isAdmin(): boolean { return this.roles().includes('Admin'); }
+  isDriver(): boolean { return this.roles().includes('Driver'); }
 
-
-  roleLabel(): string {
-    const roles = this.auth.currentUser()?.roles || [];
-    if (roles.includes('Admin')) return 'Admin';
-    if (roles.includes('Driver')) return 'Driver';
-    return 'Passenger';
-  }
-
-  isDriver(): boolean {
-    return this.auth.hasRole('Driver') || this.auth.hasRole('Admin');
-  }
-
-  navItems() {
-    const base = [
-      { path: '/app/dashboard', label: 'Dashboard', exact: true },
-      { path: '/app/routes', label: 'My Routes' },
-      { path: '/app/rides', label: 'Rides' },
-      { path: '/app/rides/lifecycle', label: 'My Rides' },
-      { path: '/app/profile', label: 'Profile' },
+  tabs(): { path: string; label: string; icon: string }[] {
+    const items: { path: string; label: string; icon: string }[] = [
+      { path: '/app/dashboard', label: 'Dashboard', icon: 'home' },
+      { path: '/app/routes', label: 'Routes', icon: 'route' },
+      { path: '/app/rides/find', label: 'Find', icon: 'search' },
+      { path: '/app/rides/lifecycle', label: 'Rides', icon: 'car' },
+      { path: '/app/gps', label: 'Maps', icon: 'map-pin' }
     ];
     if (this.isDriver()) {
-      base.push({ path: '/app/driver-profile', label: 'Driver Profile' });
-      base.push({ path: '/app/vehicles', label: 'Vehicle' });
+      items.push(
+        { path: '/app/driver-profile', label: 'Driver', icon: 'user' },
+        { path: '/app/vehicles', label: 'Vehicles', icon: 'car' }
+      );
     }
-    base.push(
-      { path: '/app/gps', label: 'Maps' },
-      { path: '/app/wallet', label: 'Wallet' },
-      { path: '/app/payments', label: 'Payments' },
-      { path: '/app/chat', label: 'Chat' },
-      { path: '/app/notifications', label: 'Notifications' },
-      { path: '/app/safety', label: 'Safety' },
-      { path: '/app/settings', label: 'Settings' }
+    items.push(
+      { path: '/app/wallet', label: 'Wallet', icon: 'wallet' },
+      { path: '/app/chat', label: 'Chat', icon: 'chat' },
+      { path: '/app/notifications', label: 'Alerts', icon: 'bell' },
+      { path: '/app/safety', label: 'Safety', icon: 'shield' },
+      { path: '/app/verification', label: 'Verify', icon: 'check' }
     );
-    return base;
-  }
-
-  mobileNav() {
-    const items = [
-      { path: '/app/dashboard', label: 'Home', icon: '🏠', exact: true },
-      { path: '/app/routes', label: 'Routes', icon: '🗺️' },
-      { path: '/app/rides', label: 'Rides', icon: '🔍' },
-      { path: '/app/rides/lifecycle', label: 'Trips', icon: '🚗' },
-      { path: '/app/profile', label: 'Profile', icon: '👤' },
-    ];
+    if (this.isAdmin()) {
+      items.push({ path: '/app/admin/verification', label: 'Admin', icon: 'settings' });
+    }
     return items;
   }
 
-  logout(): void {
-    this.menuOpen.set(false);
-    this.auth.logout();
+  displayName(): string {
+    const a: any = this.auth;
+    const u = a.currentUser?.() ?? a.user?.() ?? a.getUser?.();
+    if (!u) return 'User';
+    const n = `${u.firstName || ''} ${u.lastName || ''}`.trim();
+    return n || u.email || 'User';
   }
 
-  @HostListener('window:resize')
-  onResize() {
-    if (window.innerWidth >= 900) this.menuOpen.set(false);
+  initials(): string {
+    return this.displayName()
+      .split(/\s+/).filter(Boolean).slice(0, 2)
+      .map((s) => s[0]?.toUpperCase() || '').join('') || 'U';
+  }
+
+  roleLabel(): string {
+    if (this.isAdmin()) return 'Admin';
+    if (this.isDriver()) return 'Driver';
+    return 'Passenger';
+  }
+
+  logout(): void {
+    (this.auth as any).logout?.();
+    this.router.navigateByUrl('/auth');
   }
 }

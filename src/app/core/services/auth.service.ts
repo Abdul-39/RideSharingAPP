@@ -1,7 +1,7 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, signal, computed, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { Observable, tap, catchError, throwError } from 'rxjs';
+import { Observable, from, of, tap, catchError, throwError, switchMap } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import {
   LoginRequest,
@@ -10,84 +10,85 @@ import {
   ApiResponse,
   UserDto
 } from '../models/auth.models';
-
-const ACCESS_TOKEN_KEY = 'rs_access_token';
-const REFRESH_TOKEN_KEY = 'rs_refresh_token';
-const USER_KEY = 'rs_user';
+import { TokenStorageService } from './token-storage.service';
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly apiUrl = `${environment.apiUrl}/auth`;
+  private http = inject(HttpClient);
+  private router = inject(Router);
+  private storage = inject(TokenStorageService);
 
-  private currentUserSignal = signal<UserDto | null>(this.loadUser());
+  private currentUserSignal = signal<UserDto | null>(null);
   currentUser = this.currentUserSignal.asReadonly();
   isAuthenticated = computed(() => !!this.currentUserSignal() && !!this.getAccessToken());
 
-  constructor(private http: HttpClient, private router: Router) {}
+  constructor() {
+    this.currentUserSignal.set(this.loadUser());
+    void this.storage.whenReady().then(() => {
+      this.currentUserSignal.set(this.loadUser());
+    });
+  }
 
   register(request: RegisterRequest): Observable<ApiResponse<AuthResponse>> {
     return this.http.post<ApiResponse<AuthResponse>>(`${this.apiUrl}/register`, request).pipe(
-      tap(res => {
-        if (res.success && res.data) this.storeAuth(res.data);
-      })
+      switchMap(res => this.afterAuth(res))
     );
   }
 
   login(request: LoginRequest): Observable<ApiResponse<AuthResponse>> {
     return this.http.post<ApiResponse<AuthResponse>>(`${this.apiUrl}/login`, request).pipe(
-      tap(res => {
-        if (res.success && res.data) this.storeAuth(res.data);
-      })
+      switchMap(res => this.afterAuth(res))
     );
   }
 
   refreshToken(): Observable<ApiResponse<AuthResponse>> {
-    const accessToken = this.getAccessToken();
-    const refreshToken = this.getRefreshToken();
     return this.http.post<ApiResponse<AuthResponse>>(`${this.apiUrl}/refresh`, {
-      accessToken,
-      refreshToken
+      accessToken: this.getAccessToken(),
+      refreshToken: this.getRefreshToken()
     }).pipe(
-      tap(res => {
-        if (res.success && res.data) this.storeAuth(res.data);
-      }),
+      switchMap(res => this.afterAuth(res)),
       catchError(err => {
-        this.logout();
+        void this.logout();
         return throwError(() => err);
       })
     );
   }
 
-  logout(): void {
-    localStorage.removeItem(ACCESS_TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
+  async logout(): Promise<void> {
+    await this.storage.clearAuth();
     this.currentUserSignal.set(null);
-    this.router.navigate(['/auth']);
+    await this.router.navigateByUrl('/auth/login');
   }
 
   getAccessToken(): string | null {
-    return localStorage.getItem(ACCESS_TOKEN_KEY);
+    return this.storage.get('access_token');
   }
 
   getRefreshToken(): string | null {
-    return localStorage.getItem(REFRESH_TOKEN_KEY);
+    return this.storage.get('refresh_token');
   }
 
   hasRole(role: string): boolean {
-    const user = this.currentUserSignal();
-    return !!user?.roles?.includes(role);
+    return !!this.currentUserSignal()?.roles?.includes(role);
   }
 
-  private storeAuth(data: AuthResponse): void {
-    localStorage.setItem(ACCESS_TOKEN_KEY, data.accessToken);
-    localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
-    localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+  private afterAuth(res: ApiResponse<AuthResponse>): Observable<ApiResponse<AuthResponse>> {
+    if (res.success && res.data) {
+      return from(this.storeAuth(res.data)).pipe(switchMap(() => of(res)));
+    }
+    return of(res);
+  }
+
+  private async storeAuth(data: AuthResponse): Promise<void> {
+    await this.storage.set('access_token', data.accessToken);
+    await this.storage.set('refresh_token', data.refreshToken);
+    await this.storage.set('user', JSON.stringify(data.user));
     this.currentUserSignal.set(data.user);
   }
 
   private loadUser(): UserDto | null {
-    const raw = localStorage.getItem(USER_KEY);
+    const raw = this.storage.get('user');
     if (!raw) return null;
     try {
       return JSON.parse(raw) as UserDto;
