@@ -1,0 +1,60 @@
+@import './styles/rideshare-theme.css';
+
+/* Optional: keep Outfit only if you want; theme already loads Plus Jakarta */
+/* @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap'); */
+
+/* DO NOT redefine dark --bg / --text here */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  /* background + color come from rideshare-theme.css */
+}
+
+a { color: inherit; }
+button, input, select, textarea { font-family: inherit; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.15);
+  border-radius: 999px;
+}
+
+.leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  z-index: 0;
+}
+
+img, video, canvas, .leaflet-container {
+  max-width: 100%;
+}
+
+button, a.btn, .chip {
+  min-height: 44px;
+}
+
+@media (max-width: 768px) {
+  .page, .card, .hero {
+    margin-left: 0.75rem !important;
+    margin-right: 0.75rem !important;
+  }
+
+  nav, .nav, .top-nav, .shell-nav {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  input, select, textarea {
+    font-size: 16px;
+    max-width: 100%;
+  }
+}

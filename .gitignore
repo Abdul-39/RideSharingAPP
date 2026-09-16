@@ -1,0 +1,70 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# .NET build output
+bin/
+obj/
+
+# NuGet
+*.nupkg
+packages/
+
+# Logs
+*.log
+
+# ASP.NET Core local configuration/secrets
+appsettings.Local.json
+appsettings.*.Local.json
+
+# Node / Angular
+node_modules/
+dist/
+.angular/
+.cache/
+
+# Capacitor / Android
+.gradle/
+.idea/
+*.iml
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# ASP.NET Core
+**/bin/
+**/obj/
+
+# Visual Studio
+.vs/
+
+# Angular
+**/node_modules/
+**/dist/
+
+# Android
+**/android/.gradle/
+**/android/app/build/
+**/android/build/
+**/android/captures/
+**/android/local.properties
+
+# Development configuration
+src/**/appsettings.Development.json
+
+# User-uploaded files
+**/App_Data/verification/
+**/wwwroot/uploads/
