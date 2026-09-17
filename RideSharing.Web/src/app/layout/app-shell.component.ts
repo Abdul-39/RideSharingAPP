@@ -393,7 +393,8 @@ export class AppShellComponent {
       { path: '/app/verification', label: 'Verify', icon: 'check' }
     );
     if (this.isAdmin()) {
-      items.push({ path: '/app/admin/verification', label: 'Admin', icon: 'settings' });
+      items.push({ path: '/app/admin/dashboard', label: 'Admin Dashboard', icon: 'settings' });
+      items.push({ path: '/app/admin/verification', label: 'Review', icon: 'check' });
     }
     return items;
   }

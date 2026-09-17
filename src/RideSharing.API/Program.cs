@@ -33,7 +33,7 @@ builder.Host.UseSerilog();
 try
 {
     Log.Information(
-        "Starting RideSharing API - Phase 13 (Verification)");
+        "Starting RideSharing API - Phase 14 (Admin Dashboard and Reporting)");
 
     //
     // ========================================================
@@ -203,6 +203,13 @@ try
         VerificationService>();
 
     //
+    // Phase 14 — Admin Dashboard and Reporting
+    //
+    builder.Services.AddScoped<
+        IAdminService,
+        AdminService>();
+
+    //
     // SignalR
     //
     builder.Services.AddSignalR();
@@ -270,7 +277,7 @@ try
                 Description =
                     "Real-time ride-sharing platform for " +
                     "daily repeat-route commuters in Pakistan. " +
-                    "Phase 13 – Institution Verification and Documents."
+                    "Phase 14 – Admin Dashboard and Reporting."
             });
 
         options.AddSecurityDefinition(
@@ -374,7 +381,7 @@ try
 
     Log.Information(
         "RideSharing API is ready " +
-        "(Phase 13 – Verification).");
+        "(Phase 14 – Admin Dashboard and Reporting).");
 
     app.Run();
 }

@@ -160,10 +160,25 @@ export const routes: Routes = [
         title: 'Verification'
       },
       {
+        path: 'admin/dashboard',
+        canActivate: [roleGuard],
+        data: { roles: ['Admin'] },
+        loadComponent: () =>
+          import('./features/admin/admin-dashboard.component').then(m => m.AdminDashboardComponent),
+        title: 'Admin Dashboard'
+      },
+      {
         path: 'admin/verification',
+        canActivate: [roleGuard],
+        data: { roles: ['Admin'] },
         loadComponent: () =>
           import('./features/admin/admin-verification.component').then(m => m.AdminVerificationComponent),
         title: 'Admin Verification'
+      },
+      {
+        path: 'admin',
+        redirectTo: 'admin/dashboard',
+        pathMatch: 'full'
       },
       {
         path: 'settings',
