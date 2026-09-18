@@ -62,9 +62,10 @@ import { environment } from '../../../environments/environment';
             </label>
             <label class="lbl">Gender preference
               <select class="inp" [(ngModel)]="genderPref" name="gp">
-                <option value="Any">Any Commuters</option>
-                <option value="WomenOnly">Women Only</option>
-                <option value="MenOnly">Men Only</option>
+                <option value="0">Any Commuters</option>
+                <option value="1">Male only</option>
+                <option value="2">Female only</option>
+                <option value="3">Women only</option>
               </select>
             </label>
           </div>
@@ -185,7 +186,7 @@ export class FindRideComponent implements OnInit {
   rideDate = '';
   departureTime = '08:00';
   seats = 1;
-  genderPref = 'Any';
+  genderPref = '0';
   requestId = '';
   busy = signal(false);
   err = signal('');
@@ -216,33 +217,137 @@ export class FindRideComponent implements OnInit {
   search(): void {
     this.err.set('');
     this.msg.set('');
-    if (!this.selectedRouteId && (!this.sourceAddress || !this.destAddress)) {
-      this.err.set('Select a saved route or enter source and destination.');
+    if (!this.selectedRouteId) {
+      this.err.set('Select a saved route from the dropdown first.');
       return;
     }
+
+    const travelDate = this.normalizeDate(this.rideDate);
+    const preferredDepartureTime = this.normalizeTime(this.departureTime);
+    if (!travelDate) {
+      this.err.set('Invalid date. Use a valid travel date.');
+      return;
+    }
+    if (!preferredDepartureTime) {
+      this.err.set('Invalid time. Use HH:mm (e.g. 08:00).');
+      return;
+    }
+
     this.busy.set(true);
     this.matches.set([]);
 
-    const body: any = {
-      routeId: this.selectedRouteId || undefined,
-      date: this.rideDate,
-      preferredDepartureTime: this.departureTime?.length === 5 ? this.departureTime + ':00' : this.departureTime,
-      seatsRequired: this.seats,
-      numberOfSeats: this.seats,
-      genderPreference: this.genderPref
+    // API CreateRideRequestDto — exact field names + enum as NUMBER
+    const body = {
+      routeId: this.selectedRouteId,
+      travelDate,
+      preferredDepartureTime,
+      seatsNeeded: Number(this.seats) || 1,
+      genderPreference: this.normalizeGender(this.genderPref),
+      timeToleranceMinutes: 15
     };
 
     this.http.post<any>(`${this.api}/ride-requests`, body).subscribe({
       next: (r) => {
+        if (r && r.success === false) {
+          this.busy.set(false);
+          this.err.set(r.message || 'Could not create ride request');
+          return;
+        }
         const data = r?.data ?? r;
         this.requestId = data?.id || data?.rideRequestId || '';
-        this.msg.set(r?.message || 'Request created. Loading matches…');
-        this.loadMatches();
+        this.msg.set(r?.message || 'Request created. Running matching…');
+        this.runMatchThenLoad();
       },
       error: (e) => {
         this.busy.set(false);
-        this.err.set(e.error?.message || 'Could not create ride request');
+        const p = e.error;
+        let msg = p?.message || p?.title || 'Could not create ride request';
+        if (p?.errors) {
+          const parts: string[] = [];
+          for (const k of Object.keys(p.errors)) {
+            const v = p.errors[k];
+            parts.push(`${k}: ${Array.isArray(v) ? v.join(', ') : v}`);
+          }
+          if (parts.length) msg = parts.join(' | ');
+        }
+        this.err.set(msg);
       }
+    });
+  }
+
+  /** yyyy-MM-dd from date input or MM/DD/YYYY */
+  normalizeDate(v: string): string {
+    if (!v) return '';
+    v = String(v).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    const m = v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (m) {
+      const a = parseInt(m[1], 10);
+      const b = parseInt(m[2], 10);
+      const y = m[3];
+      // If first > 12 treat as DD/MM/YYYY else assume MM/DD/YYYY (browser en-US)
+      let month: number, day: number;
+      if (a > 12) { day = a; month = b; }
+      else { month = a; day = b; }
+      return `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+    const d = new Date(v);
+    if (!isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const mo = String(d.getMonth() + 1).padStart(2, '0');
+      const da = String(d.getDate()).padStart(2, '0');
+      return `${y}-${mo}-${da}`;
+    }
+    return '';
+  }
+
+  /** HH:mm from "08:00", "08:00:00", "08:00 AM", "8:00 PM" */
+  normalizeTime(v: string): string {
+    if (!v) return '';
+    v = String(v).trim();
+    const ampm = v.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
+    if (ampm) {
+      let h = parseInt(ampm[1], 10);
+      const min = ampm[2];
+      const ap = ampm[3].toUpperCase();
+      if (ap === 'PM' && h < 12) h += 12;
+      if (ap === 'AM' && h === 12) h = 0;
+      return `${String(h).padStart(2, '0')}:${min}`;
+    }
+    const m = v.match(/^(\d{1,2}):(\d{2})/);
+    if (m) return `${String(parseInt(m[1], 10)).padStart(2, '0')}:${m[2]}`;
+    return '';
+  }
+
+  /** GenderPreference enum: Any=0, MaleOnly=1, FemaleOnly=2, WomenOnly=3 */
+  normalizeGender(v: any): number {
+    const s = String(v ?? '0').trim().toLowerCase();
+    if (s === '0' || s === 'any' || s.includes('any')) return 0;
+    if (s === '1' || s.includes('male only') || s === 'maleonly' || s === 'male') return 1;
+    if (s === '2' || s.includes('female only') || s === 'femaleonly' || s === 'female') return 2;
+    if (s === '3' || s.includes('women')) return 3;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 && n <= 3 ? n : 0;
+  }
+
+  runMatchThenLoad(): void {
+    if (!this.requestId) {
+      this.busy.set(false);
+      return;
+    }
+    this.http.post<any>(`${this.api}/ride-requests/${this.requestId}/match`, {}).subscribe({
+      next: (r) => {
+        const data = r?.data ?? r;
+        const list = Array.isArray(data) ? data : data?.matches || [];
+        this.matches.set(list);
+        this.busy.set(false);
+        this.msg.set(
+          list.length
+            ? `Found ${list.length} match(es). Accept to notify the driver.`
+            : (r?.message || 'No matches found. Check driver route, time ±15 min, seats, direction.')
+        );
+      },
+      error: () => this.loadMatches()
     });
   }
 
@@ -277,40 +382,35 @@ export class FindRideComponent implements OnInit {
     tryUrl(0);
   }
 
-  accept(m: any): void {
-    const matchId = m.id || m.matchId;
-    if (!matchId) return;
-    this.busy.set(true);
-    this.http.post<any>(`${this.api}/ride-matches/${matchId}/accept`, {}).subscribe({
-      next: () => {
+  
+accept(m: any): void {
+  const matchId = m.id || m.matchId;
+  if (!matchId) return;
+  this.busy.set(true);
+  this.http.post<any>(`${this.api}/ride-requests/matches/${matchId}/respond`, { accept: true })
+    .subscribe({
+      next: (res) => {
         this.busy.set(false);
-        this.msg.set('Match accepted');
+        this.msg.set(res?.message || 'Match accepted. Driver notified.');
         this.router.navigateByUrl('/app/rides/lifecycle');
       },
       error: (e) => {
-        // alternate path
-        this.http.post<any>(`${this.api}/rides/matches/${matchId}/accept`, {}).subscribe({
-          next: () => {
-            this.busy.set(false);
-            this.router.navigateByUrl('/app/rides/lifecycle');
-          },
-          error: (e2) => {
-            this.busy.set(false);
-            this.err.set(e2.error?.message || e.error?.message || 'Accept failed');
-          }
-        });
+        this.busy.set(false);
+        this.err.set(e.error?.message || 'Accept failed');
       }
     });
-  }
+}
 
-  reject(m: any): void {
-    const matchId = m.id || m.matchId;
-    if (!matchId) return;
-    this.http.post(`${this.api}/ride-matches/${matchId}/reject`, {}).subscribe({
-      next: () => this.matches.update((list) => list.filter((x) => (x.id || x.matchId) !== matchId)),
-      error: () => this.matches.update((list) => list.filter((x) => (x.id || x.matchId) !== matchId))
+reject(m: any): void {
+  const matchId = m.id || m.matchId;
+  if (!matchId) return;
+  this.http.post(`${this.api}/ride-requests/matches/${matchId}/respond`, { accept: false })
+    .subscribe({
+      next: () => this.matches.update(list => list.filter(x => (x.id || x.matchId) !== matchId)),
+      error: () => {}
     });
-  }
+}
+
 
   trackMatch(m: any): string {
     return String(m.id || m.matchId || m.matchedUserId || Math.random());

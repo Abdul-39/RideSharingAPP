@@ -1,5 +1,5 @@
 import {
-  Component, OnInit, OnDestroy, AfterViewInit, inject, signal,
+  Component, OnInit, OnDestroy, AfterViewInit, inject, signal, computed,
   ElementRef, ViewChild, NgZone
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -7,6 +7,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
+import { findClosestTwinCitiesPlace } from '../../core/constants/places.constants';
 
 declare const L: any;
 
@@ -47,10 +48,12 @@ declare const L: any;
             </select>
           </label>
 
-          <div class="coords">
-            <div><span>Lat</span><strong>{{ lat() ?? '—' }}</strong></div>
-            <div><span>Lng</span><strong>{{ lng() ?? '—' }}</strong></div>
-          </div>
+          @if (currentPlaceName()) {
+            <div class="cur-place">
+              <span class="cp-lbl">📍 DETECTED LOCATION</span>
+              <strong class="cp-val">{{ currentPlaceName() }}</strong>
+            </div>
+          }
 
           @if (routeSource()) {
             <p class="route-line"><span class="dot g"></span> {{ routeSource() }}</p>
@@ -118,8 +121,8 @@ declare const L: any;
     }
     .btn {
       display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
-      padding: 0.5rem 1rem; border-radius: 999px; font-weight: 800; border: none; cursor: pointer;
-      text-decoration: none; margin-bottom: 0.45rem;
+      padding: 0.5rem 1rem; border-radius: 999px; font-weight: 800; font-size: 0.88rem;
+      border: none; cursor: pointer; text-decoration: none; margin-bottom: 0.45rem;
     }
     .btn.primary { background: #0d9f6e; color: #fff; }
     .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
@@ -129,11 +132,12 @@ declare const L: any;
       display: block; width: 100%; margin-top: 0.3rem; min-height: 44px;
       padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid #e2e8f0;
     }
-    .coords { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.5rem; }
-    .coords div {
-      background: #f8fafc; border-radius: 10px; padding: 0.5rem 0.65rem; font-size: 0.85rem;
+    .cur-place {
+      margin-top: 0.65rem; padding: 0.65rem 0.85rem; border-radius: 12px;
+      background: #ecfdf5; border: 1px solid #a7f3d0;
     }
-    .coords span { display: block; color: #64748b; font-size: 0.72rem; }
+    .cp-lbl { display: block; font-size: 0.68rem; font-weight: 800; color: #065f46; margin-bottom: 0.2rem; }
+    .cp-val { display: block; font-size: 0.88rem; color: #0f172a; word-break: break-word; }
     .route-line { display: flex; gap: 0.45rem; align-items: flex-start; font-size: 0.88rem; margin: 0.35rem 0; }
     .dot {
       width: 10px; height: 10px; border-radius: 50%; display: inline-block;
@@ -141,56 +145,44 @@ declare const L: any;
     }
     .dot.g { background: #0d9f6e; }
     .dot.d { background: #e11d48; }
-    .dot.m { background: #2563eb; }
-
-    /* CRITICAL: map must fill full column width */
-    .map-wrap {
-      padding: 0.75rem;
-      min-width: 0; /* grid fix */
-      width: 100%;
-    }
+    .dot.m { background: #3b82f6; }
+    .map-wrap { padding: 0; overflow: hidden; }
     .map-shell {
       position: relative;
       width: 100%;
-      height: 420px;
-      border-radius: 14px;
-      overflow: hidden;
-      border: 1px solid #e2e8f0;
-      background: #cfd8dc;
+      height: 380px;
+      min-height: 280px;
+      background: #e2e8f0;
     }
     .map-root {
       position: absolute;
       inset: 0;
-      width: 100% !important;
-      height: 100% !important;
-    }
-    :host ::ng-deep .leaflet-container {
-      width: 100% !important;
-      height: 100% !important;
-      background: #cfd8dc;
-    }
-    :host ::ng-deep .leaflet-tile-pane,
-    :host ::ng-deep .leaflet-map-pane {
       width: 100%;
+      height: 100%;
+      z-index: 1;
     }
-
     .legend {
-      display: flex; gap: 1rem; font-size: 0.8rem; color: #475569; margin-top: 0.55rem;
+      display: flex; gap: 1rem; padding: 0.65rem 1rem; background: #f8fafc;
+      border-top: 1px solid #e2e8f0; font-size: 0.8rem; color: #64748b;
     }
-    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .legend span { display: flex; align-items: center; gap: 0.35rem; }
+    .legend i { margin: 0; }
     .near {
-      display: flex; justify-content: space-between; padding: 0.55rem 0; border-bottom: 1px solid #f1f5f9;
+      display: flex; justify-content: space-between; padding: 0.55rem 0;
+      border-bottom: 1px solid #f1f5f9; font-size: 0.88rem;
     }
-    .muted { color: #64748b; } .err { color: #e11d48; } .ok { color: #0d9f6e; }
+    .muted { color: #64748b; font-size: 0.85rem; }
+    .ok { color: #0d9f6e; font-size: 0.85rem; margin-top: 0.4rem; }
+    .err { color: #e11d48; font-size: 0.85rem; margin-top: 0.4rem; }
   `]
 })
-export class GpsPageComponent implements OnInit, AfterViewInit, OnDestroy {
-  @ViewChild('mapEl') mapEl!: ElementRef<HTMLDivElement>;
-  @ViewChild('shell') shell!: ElementRef<HTMLDivElement>;
-
+export class GpsPageComponent implements OnInit, OnDestroy, AfterViewInit {
   private http = inject(HttpClient);
   private zone = inject(NgZone);
   private api = (environment.apiUrl || '/api/v1').replace(/\/$/, '');
+
+  @ViewChild('mapEl') mapEl!: ElementRef<HTMLDivElement>;
+  @ViewChild('shell') shellEl!: ElementRef<HTMLDivElement>;
 
   private map: any = null;
   private layer: any = null;
@@ -202,6 +194,14 @@ export class GpsPageComponent implements OnInit, AfterViewInit, OnDestroy {
   selectedRouteId = '';
   lat = signal<number | null>(null);
   lng = signal<number | null>(null);
+  currentPlaceName = computed(() => {
+    const la = this.lat();
+    const ln = this.lng();
+    if (la != null && ln != null) {
+      return findClosestTwinCitiesPlace(la, ln).name;
+    }
+    return '';
+  });
   routeSource = signal('');
   routeDest = signal('');
   srcLat = signal<number | null>(null);
@@ -222,7 +222,6 @@ export class GpsPageComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit(): void {
-    // Layout must settle (grid column width) before Leaflet measures the container
     requestAnimationFrame(() => {
       setTimeout(() => this.initMap(), 80);
     });
@@ -231,31 +230,28 @@ export class GpsPageComponent implements OnInit, AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     window.removeEventListener('resize', this.onWinResize);
     this.resizeObs?.disconnect();
+    this.resizeObs = null;
     if (this.map) {
-      this.map.remove();
+      try {
+        this.map.remove();
+      } catch {
+        // ignore
+      }
       this.map = null;
     }
   }
 
   private initMap(): void {
-    if (typeof L === 'undefined') {
-      this.err.set('Leaflet not loaded. Add leaflet CSS/JS in index.html');
-      return;
-    }
-    if (!this.mapEl?.nativeElement || this.map) return;
+    if (typeof L === 'undefined' || !this.mapEl?.nativeElement) return;
+    if (this.map) return;
 
     this.zone.runOutsideAngular(() => {
       const el = this.mapEl.nativeElement;
-      const shell = this.shell?.nativeElement;
-      const w = Math.max(shell?.clientWidth || el.clientWidth || 600, 280);
-      const h = Math.max(shell?.clientHeight || 420, 300);
-      el.style.width = w + 'px';
-      el.style.height = h + 'px';
-
       this.map = L.map(el, {
-        zoomControl: true,
-        preferCanvas: false
-      }).setView([33.6844, 73.0479], 12);
+        center: [33.6844, 73.0479],
+        zoom: 12,
+        zoomControl: true
+      });
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
@@ -264,47 +260,41 @@ export class GpsPageComponent implements OnInit, AfterViewInit, OnDestroy {
 
       this.layer = L.layerGroup().addTo(this.map);
 
-      // Fix partial tiles after grid/layout
-      this.fixSize();
-      setTimeout(() => this.fixSize(), 150);
-      setTimeout(() => this.fixSize(), 400);
-      setTimeout(() => this.fixSize(), 800);
-
-      window.addEventListener('resize', this.onWinResize);
-
-      if (typeof ResizeObserver !== 'undefined' && shell) {
+      const shell = this.shellEl?.nativeElement;
+      if (shell && typeof ResizeObserver !== 'undefined') {
         this.resizeObs = new ResizeObserver(() => this.fixSize());
         this.resizeObs.observe(shell);
       }
+      window.addEventListener('resize', this.onWinResize);
+
+      this.fixSize();
+      this.redraw();
     });
   }
 
   private fixSize(): void {
-    if (!this.map || !this.mapEl?.nativeElement) return;
+    if (!this.map) return;
     this.zone.runOutsideAngular(() => {
-      const el = this.mapEl.nativeElement;
-      const shell = this.shell?.nativeElement;
-      const w = Math.max(shell?.clientWidth || el.parentElement?.clientWidth || 0, 280);
-      const h = Math.max(shell?.clientHeight || 420, 300);
-      el.style.width = w + 'px';
-      el.style.height = h + 'px';
-      this.map.invalidateSize(true);
+      requestAnimationFrame(() => {
+        try {
+          this.map.invalidateSize();
+        } catch {
+          // ignore
+        }
+      });
     });
   }
 
   private pin(color: string): any {
     return L.divIcon({
-      className: '',
-      html: `<div style="
-        width:14px;height:14px;border-radius:50% 50% 50% 0;background:${color};
-        border:2px solid #fff;transform:rotate(-45deg);box-shadow:0 2px 5px rgba(0,0,0,.35)"></div>`,
+      className: 'rs-leaflet-pin',
+      html: `<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.35);"></div>`,
       iconSize: [14, 14],
-      iconAnchor: [7, 14]
+      iconAnchor: [7, 7]
     });
   }
 
   private redraw(): void {
-    if (!this.map) this.initMap();
     if (!this.map || !this.layer) return;
 
     this.zone.runOutsideAngular(() => {
@@ -314,7 +304,9 @@ export class GpsPageComponent implements OnInit, AfterViewInit, OnDestroy {
       const la = this.lat();
       const ln = this.lng();
       if (la != null && ln != null) {
-        L.marker([la, ln], { icon: this.pin('#2563eb') }).bindPopup('Me').addTo(this.layer);
+        L.marker([la, ln], { icon: this.pin('#3b82f6') })
+          .bindPopup('You are here')
+          .addTo(this.layer);
         bounds.push([la, ln]);
       }
 

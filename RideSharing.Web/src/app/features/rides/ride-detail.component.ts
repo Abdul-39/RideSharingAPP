@@ -260,7 +260,7 @@ export class RideDetailComponent implements OnInit {
     }
     if (action === 'arriving') return s === 'confirmed';
     if (action === 'arrived') return s === 'driverarriving';
-    if (action === 'start') return s === 'driverarrived' || s === 'confirmed';
+    if (action === 'start') return s === 'driverarrived';  // not from Confirmed
     if (action === 'complete') return s === 'inprogress';
     return false;
   }
@@ -275,8 +275,8 @@ export class RideDetailComponent implements OnInit {
     const map: Record<string, string> = {
       confirm: 'confirm',
       cancel: 'cancel',
-      arriving: 'arriving',
-      arrived: 'arrived',
+      arriving: 'driver-arriving',
+      arrived: 'driver-arrived',
       start: 'start',
       complete: 'complete'
     };
