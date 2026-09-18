@@ -26,4 +26,8 @@
     <ProjectReference Include="..\RideSharing.Persistence\RideSharing.Persistence.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="wwwroot\" />
+  </ItemGroup>
+
 </Project>

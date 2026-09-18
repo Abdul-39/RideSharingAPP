@@ -25,7 +25,11 @@ public class RouteConfiguration : IEntityTypeConfiguration<Route>
             .HasPrecision(9, 6)
             .IsRequired();
 
-        builder.Property(r => r.DestinationLongitude)
+        builder.Property(r => r.RoutePolylineJson).HasColumnType("nvarchar(max)");
+        builder.Property(r => r.DistanceKm);
+        builder.Property(r => r.DurationMinutes);
+
+    builder.Property(r => r.DestinationLongitude)
             .HasPrecision(9, 6)
             .IsRequired();
 
