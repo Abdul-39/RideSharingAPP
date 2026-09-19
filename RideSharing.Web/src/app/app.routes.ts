@@ -81,36 +81,45 @@ export const routes: Routes = [
           import('./features/routes/route-form.component').then(m => m.RouteFormComponent),
         title: 'Edit Route'
       },
-      {
-        path: 'rides',
-        loadComponent: () =>
-          import('./features/rides/ride-list.component').then(m => m.RideListComponent),
-        title: 'Ride Requests'
-      },
-      {
-        path: 'rides/find',
-        loadComponent: () =>
-          import('./features/rides/find-ride.component').then(m => m.FindRideComponent),
-        title: 'Find Ride'
-      },
-      {
-        path: 'rides/lifecycle',
-        loadComponent: () =>
-          import('./features/rides/ride-lifecycle-list.component').then(m => m.RideLifecycleListComponent),
-        title: 'My Rides'
-      },
-      {
-        path: 'rides/lifecycle/:id',
-        loadComponent: () =>
-          import('./features/rides/ride-detail.component').then(m => m.RideDetailComponent),
-        title: 'Ride Details'
-      },
-      {
-        path: 'rides/:id/matches',
-        loadComponent: () =>
-          import('./features/rides/match-results.component').then(m => m.MatchResultsComponent),
-        title: 'Match Results'
-      },
+     {
+  path: 'rides',
+  loadComponent: () =>
+    import('./features/rides/ride-list.component')
+      .then(m => m.RideListComponent),
+  title: 'Ride Requests'
+},
+
+{
+  path: 'rides/find',
+  loadComponent: () =>
+    import('./features/rides/find-ride.component')
+      .then(m => m.FindRideComponent),
+  title: 'Find Ride'
+},
+
+{
+  path: 'rides/lifecycle',
+  loadComponent: () =>
+    import('./features/rides/ride-lifecycle-list.component')
+      .then(m => m.RideLifecycleListComponent),
+  title: 'My Rides'
+},
+
+{
+  path: 'rides/lifecycle/:id',
+  loadComponent: () =>
+    import('./features/rides/ride-detail.component')
+      .then(m => m.RideDetailComponent),
+  title: 'Ride Details'
+},
+
+{
+  path: 'rides/:id/matches',
+  loadComponent: () =>
+    import('./features/rides/match-results.component')
+      .then(m => m.MatchResultsComponent),
+  title: 'Match Results'
+},
       {
         path: 'notifications',
         loadComponent: () =>

@@ -68,9 +68,14 @@ public static class GeoMath
     return Math.Max(0, via - original);
   }
 
+  /// <summary>
+  /// Returns the approximate 0..1 progress of the closest point on a route.
+  /// 0 means the route start and 1 means the route end.
+  /// </summary>
   public static double ProgressAlongRoute(GeoPoint p, IReadOnlyList<GeoPoint> line)
   {
     if (line == null || line.Count < 2) return 0;
+
     double total = 0;
     var segLens = new double[line.Count - 1];
     for (var i = 0; i < line.Count - 1; i++)
@@ -79,14 +84,82 @@ public static class GeoMath
       total += segLens[i];
     }
     if (total < 1e-9) return 0;
-    var best = 0.0; var bestD = double.MaxValue; double acc = 0;
+
+    var bestProgress = 0.0;
+    var bestDistance = double.MaxValue;
+    double accumulated = 0;
+
     for (var i = 0; i < line.Count - 1; i++)
     {
       var d = DistancePointToSegmentKm(p, line[i], line[i + 1]);
-      if (d < bestD) { bestD = d; best = (acc + segLens[i] * 0.5) / total; }
-      acc += segLens[i];
+      if (d < bestDistance)
+      {
+        bestDistance = d;
+        // The existing distance helper clamps to the segment. The midpoint is
+        // deliberately conservative here because we only need route ordering.
+        bestProgress = (accumulated + segLens[i] * 0.5) / total;
+      }
+      accumulated += segLens[i];
     }
-    return best;
+
+    return Math.Clamp(bestProgress, 0, 1);
+  }
+
+  /// <summary>
+  /// Estimates the road distance travelled on the driver route between two
+  /// points that have been projected onto that route.
+  /// </summary>
+  public static double DistanceBetweenRouteProgressKm(
+      IReadOnlyList<GeoPoint> line, double fromProgress, double toProgress)
+  {
+    if (line == null || line.Count < 2) return 0;
+
+    fromProgress = Math.Clamp(fromProgress, 0, 1);
+    toProgress = Math.Clamp(toProgress, 0, 1);
+    if (toProgress <= fromProgress) return 0;
+
+    double total = 0;
+    for (var i = 0; i < line.Count - 1; i++)
+      total += HaversineKm(line[i].Latitude, line[i].Longitude, line[i + 1].Latitude, line[i + 1].Longitude);
+
+    return total * (toProgress - fromProgress);
+  }
+
+  /// <summary>
+  /// Estimates passenger-induced detour using the driver's actual route
+  /// corridor instead of only straight-line endpoint distances.
+  /// </summary>
+  public static double EstimateCorridorDetourKm(
+      GeoPoint driverStart, GeoPoint driverEnd,
+      GeoPoint pickup, GeoPoint dropoff,
+      IReadOnlyList<GeoPoint> driverRoute,
+      double pickupProgress, double dropoffProgress)
+  {
+    if (driverRoute == null || driverRoute.Count < 2)
+      return ApproximateDetourKm(driverStart, driverEnd, pickup, dropoff);
+
+    var routeKm = 0.0;
+    for (var i = 0; i < driverRoute.Count - 1; i++)
+      routeKm += HaversineKm(driverRoute[i].Latitude, driverRoute[i].Longitude,
+                             driverRoute[i + 1].Latitude, driverRoute[i + 1].Longitude);
+
+    if (routeKm < 0.1)
+      return ApproximateDetourKm(driverStart, driverEnd, pickup, dropoff);
+
+    var accessToPickup = DistancePointToPolylineKm(pickup, driverRoute);
+    var accessFromDropoff = DistancePointToPolylineKm(dropoff, driverRoute);
+    // Driver normally travels the route segment between the projected pickup
+    // and drop-off points. The passenger trip can be different from that
+    // segment, so include the pickup-to-drop-off leg as well.
+    var baselineSegment = DistanceBetweenRouteProgressKm(
+        driverRoute, pickupProgress, dropoffProgress);
+    var passengerLeg = HaversineKm(
+        pickup.Latitude, pickup.Longitude,
+        dropoff.Latitude, dropoff.Longitude);
+
+    var detour = accessToPickup + passengerLeg + accessFromDropoff - baselineSegment;
+
+    return Math.Max(0, detour);
   }
 
   private static double ToRad(double d) => d * Math.PI / 180.0;
