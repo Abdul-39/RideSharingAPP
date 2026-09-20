@@ -29,7 +29,7 @@ public class CorridorRideMatchingService : IRideMatchingService
   // Driver source -> passenger pickup maximum distance
   private const double NearbySourceDistanceKm = 12.0;
 
-  // Driver destination -> passenger dropoff maximum distance
+  // Driver destination -> passenger drop-off maximum distance
   private const double NearbyDestinationDistanceKm = 12.0;
 
   public CorridorRideMatchingService(
@@ -43,6 +43,10 @@ public class CorridorRideMatchingService : IRideMatchingService
     _opt = opt.Value;
     _log = log;
   }
+
+  // =============================================================
+  // MAIN MATCHING
+  // =============================================================
 
   public async Task<IReadOnlyList<CorridorMatchDto>> FindMatchesAsync(
       RideRequest request,
@@ -60,17 +64,84 @@ public class CorridorRideMatchingService : IRideMatchingService
         .Reference(r => r.User)
         .LoadAsync(ct);
 
-    var pr = request.Route
+    var passengerRoute = request.Route
         ?? throw new InvalidOperationException(
             "Ride request has no route.");
 
+    var passengerUser = request.User
+        ?? throw new InvalidOperationException(
+            "Ride request has no user.");
+
     var pickup = new GeoPoint(
-        (double)pr.SourceLatitude,
-        (double)pr.SourceLongitude);
+        (double)passengerRoute.SourceLatitude,
+        (double)passengerRoute.SourceLongitude);
 
     var dropoff = new GeoPoint(
-        (double)pr.DestinationLatitude,
-        (double)pr.DestinationLongitude);
+        (double)passengerRoute.DestinationLatitude,
+        (double)passengerRoute.DestinationLongitude);
+
+    // =========================================================
+    // PASSENGER ROUTE ROAD DISTANCE
+    //
+    // Prefer the distance already calculated and stored when
+    // the passenger route was created. If it is not available,
+    // calculate the road route once using the routing service.
+    // This is NOT Haversine/straight-line distance.
+    // =========================================================
+
+    var passengerRouteDistanceKm =
+        passengerRoute.DistanceKm;
+
+    if (!passengerRouteDistanceKm.HasValue ||
+        passengerRouteDistanceKm.Value <= 0)
+    {
+      try
+      {
+        var passengerGeometry =
+            await _routing.GetRouteAsync(
+                (double)passengerRoute.SourceLatitude,
+                (double)passengerRoute.SourceLongitude,
+                (double)passengerRoute.DestinationLatitude,
+                (double)passengerRoute.DestinationLongitude,
+                ct);
+
+        if (passengerGeometry.Points.Count >= 2)
+        {
+          passengerRouteDistanceKm =
+              passengerGeometry.Points
+                  .Zip(
+                      passengerGeometry.Points.Skip(1),
+                      (a, b) =>
+                          GeoMath.HaversineKm(
+                              a.Latitude,
+                              a.Longitude,
+                              b.Latitude,
+                              b.Longitude))
+                  .Sum();
+        }
+      }
+      catch (Exception ex)
+      {
+        _log.LogWarning(
+            ex,
+            "PASSENGER ROUTE DISTANCE: Unable to calculate road distance " +
+            "for Request={RequestId}, Route={RouteId}",
+            request.Id,
+            passengerRoute.Id);
+      }
+    }
+
+    _log.LogInformation(
+        "PASSENGER ROUTE DISTANCE CHECK: Request={RequestId}, Route={RouteId}, " +
+        "PassengerRoute={PassengerSource} -> {PassengerDestination}, " +
+        "RoadDistance={PassengerRouteDistance}",
+        request.Id,
+        passengerRoute.Id,
+        passengerRoute.SourceAddress,
+        passengerRoute.DestinationAddress,
+        passengerRouteDistanceKm.HasValue
+            ? $"{passengerRouteDistanceKm.Value:F2} km"
+            : "N/A");
 
     var tolerance =
         request.TimeToleranceMinutes > 0
@@ -101,7 +172,8 @@ public class CorridorRideMatchingService : IRideMatchingService
             r.IsDriverRoute &&
             r.AvailableSeats > 0 &&
             r.UserId != request.UserId &&
-            r.User.IsActive)
+            r.User.IsActive &&
+            !r.User.IsDeleted)
         .ToListAsync(ct);
 
     _log.LogInformation(
@@ -109,14 +181,17 @@ public class CorridorRideMatchingService : IRideMatchingService
         candidates.Count);
 
     // =========================================================
-    // GET VEHICLES
+    // GET DRIVER IDS
     // =========================================================
 
-    var driverIds =
-        candidates
-            .Select(c => c.UserId)
-            .Distinct()
-            .ToList();
+    var driverIds = candidates
+        .Select(c => c.UserId)
+        .Distinct()
+        .ToList();
+
+    // =========================================================
+    // GET VEHICLES
+    // =========================================================
 
     var vehicles = await _db.Vehicles
         .AsNoTracking()
@@ -147,10 +222,9 @@ public class CorridorRideMatchingService : IRideMatchingService
         .ToListAsync(ct);
 
     // =========================================================
-    // EXISTING ACCEPTED MATCHES BY DRIVER
+    // EXISTING ACCEPTED MATCHES
     //
-    // We load these because seat reservation is now calculated
-    // per DRIVER ROUTE rather than globally per driver.
+    // Used for route-specific seat reservation.
     // =========================================================
 
     var acceptedMatches = await _db.RideMatches
@@ -161,7 +235,10 @@ public class CorridorRideMatchingService : IRideMatchingService
         .ToListAsync(ct);
 
     // =========================================================
-    // ALREADY MATCHED DRIVERS FOR THIS REQUEST
+    // ALREADY MATCHED DRIVERS
+    //
+    // If this driver already has an active match for this
+    // passenger request, don't create another match.
     // =========================================================
 
     var alreadyMatchedDrivers =
@@ -173,21 +250,50 @@ public class CorridorRideMatchingService : IRideMatchingService
             .ToHashSet();
 
     // =========================================================
-    // MATCH EACH DRIVER ROUTE
+    // IMPORTANT:
+    //
+    // One driver can have multiple saved recurring routes.
+    //
+    // Example:
+    //
+    // Driver
+    //   Route A
+    //   Route B
+    //   Route C
+    //
+    // We evaluate ALL routes but save only the BEST route
+    // for that driver.
+    //
+    // Priority:
+    //
+    // 1. CORRIDOR / SAME ROUTE
+    // 2. NEARBY / RANDOM
+    //
+    // Inside the same mode:
+    //
+    // Higher score wins.
     // =========================================================
 
-    var day =
+    var bestCandidateByDriver =
+        new Dictionary<Guid, MatchingCandidate>();
+
+    // =========================================================
+    // TRAVEL DAY
+    // =========================================================
+
+    var travelDay =
         request.TravelDate.DayOfWeek;
 
-    var results =
-        new List<CorridorMatchDto>();
+    // =========================================================
+    // EVALUATE EACH DRIVER ROUTE
+    // =========================================================
 
     foreach (var driverRoute in candidates)
     {
       try
       {
         // =================================================
-        // ALREADY MATCHED
+        // ALREADY MATCHED DRIVER
         // =================================================
 
         if (alreadyMatchedDrivers.Contains(
@@ -203,20 +309,38 @@ public class CorridorRideMatchingService : IRideMatchingService
         }
 
         // =================================================
-        // SCHEDULE / DAY
+        // SCHEDULE / DAY / EFFECTIVE DATE
         // =================================================
 
-        if (driverRoute.RideSchedules.Count > 0 &&
-            !driverRoute.RideSchedules.Any(
-                s => MatchesDay(s, day)))
-        {
-          _log.LogInformation(
-              "MATCH REJECTED: Driver={DriverId}, " +
-              "schedule does not match {Day}",
-              driverRoute.UserId,
-              day);
+        var activeSchedules =
+            driverRoute.RideSchedules
+                .Where(s =>
+                    s.IsActive &&
+                    !s.IsDeleted)
+                .ToList();
 
-          continue;
+        if (activeSchedules.Count > 0)
+        {
+          var scheduleMatches =
+              activeSchedules.Any(
+                  s => MatchesSchedule(
+                      s,
+                      request.TravelDate,
+                      travelDay));
+
+          if (!scheduleMatches)
+          {
+            _log.LogInformation(
+                "MATCH REJECTED: Driver={DriverId}, " +
+                "Route={RouteId}, schedule does not match " +
+                "TravelDate={TravelDate}, Day={Day}",
+                driverRoute.UserId,
+                driverRoute.Id,
+                request.TravelDate,
+                travelDay);
+
+            continue;
+          }
         }
 
         // =================================================
@@ -264,7 +388,8 @@ public class CorridorRideMatchingService : IRideMatchingService
               driverPref =
                   GenderPreference.FemaleOnly;
             }
-            else if (value is GenderPreference genderPreference)
+            else if (
+                value is GenderPreference genderPreference)
             {
               driverPref =
                   genderPreference;
@@ -279,7 +404,7 @@ public class CorridorRideMatchingService : IRideMatchingService
         if (!GenderMatchingRules.IsEligible(
                 driverRoute.User.Gender,
                 driverPref,
-                request.User.Gender,
+                passengerUser.Gender,
                 request.GenderPreference))
         {
           _log.LogInformation(
@@ -295,9 +420,11 @@ public class CorridorRideMatchingService : IRideMatchingService
         // =================================================
 
         if (_opt.RequireVerifiedForWomenOnly &&
-            (GenderMatchingRules.IsWomenOnly(driverPref) ||
-             GenderMatchingRules.IsWomenOnly(
-                 request.GenderPreference)) &&
+            (
+                GenderMatchingRules.IsWomenOnly(driverPref) ||
+                GenderMatchingRules.IsWomenOnly(
+                    request.GenderPreference)
+            ) &&
             !driverRoute.User.IsVerified)
         {
           _log.LogInformation(
@@ -311,9 +438,8 @@ public class CorridorRideMatchingService : IRideMatchingService
         // =================================================
         // VEHICLE
         //
-        // Vehicle is used for display information only.
-        // Route.AvailableSeats is the source of truth for
-        // this published driver route.
+        // Vehicle is mainly used for display.
+        // Route.AvailableSeats remains source of truth.
         // =================================================
 
         var vehicle =
@@ -325,21 +451,7 @@ public class CorridorRideMatchingService : IRideMatchingService
                 .FirstOrDefault();
 
         // =================================================
-        // ROUTE-SPECIFIC SEATS
-        //
-        // IMPORTANT:
-        // Do NOT use:
-        //
-        // Vehicle Capacity - driver's global reservations
-        //
-        // because a driver may have multiple routes.
-        //
-        // Instead:
-        //
-        // Route.AvailableSeats
-        //          -
-        // Accepted matches on THIS route
-        //
+        // ROUTE-SPECIFIC SEAT CALCULATION
         // =================================================
 
         var routeCapacity =
@@ -408,7 +520,7 @@ public class CorridorRideMatchingService : IRideMatchingService
                         .ToTimeSpan()
                 ).TotalMinutes);
 
-        // Handle crossing midnight.
+        // Handle midnight crossing.
         if (timeDiff > 12 * 60)
         {
           timeDiff =
@@ -443,7 +555,41 @@ public class CorridorRideMatchingService : IRideMatchingService
                 (double)driverRoute.DestinationLongitude);
 
         // =================================================
-        // DIRECT DISTANCES FOR MODE 2
+        // ROUTE DETAILS DEBUG
+        //
+        // This log is intentionally added so the exact
+        // Driver Source -> Driver Destination pair can be
+        // checked manually in Google Maps.
+        //
+        // It also logs the passenger Source -> Destination
+        // pair and all coordinates.
+        // =================================================
+
+        _log.LogInformation(
+            "ROUTE DETAILS: Driver={DriverId}, Route={RouteId}, " +
+            "DriverSource={DriverSource}, DriverDestination={DriverDestination}, " +
+            "DriverSourceCoords={DriverSourceLat:F6},{DriverSourceLon:F6}, " +
+            "DriverDestinationCoords={DriverDestinationLat:F6},{DriverDestinationLon:F6}, " +
+            "PassengerSource={PassengerSource}, PassengerDestination={PassengerDestination}, " +
+            "PassengerSourceCoords={PassengerSourceLat:F6},{PassengerSourceLon:F6}, " +
+            "PassengerDestinationCoords={PassengerDestinationLat:F6},{PassengerDestinationLon:F6}",
+            driverRoute.UserId,
+            driverRoute.Id,
+            driverRoute.SourceAddress,
+            driverRoute.DestinationAddress,
+            driverStart.Latitude,
+            driverStart.Longitude,
+            driverEnd.Latitude,
+            driverEnd.Longitude,
+            passengerRoute.SourceAddress,
+            passengerRoute.DestinationAddress,
+            pickup.Latitude,
+            pickup.Longitude,
+            dropoff.Latitude,
+            dropoff.Longitude);
+
+        // =================================================
+        // MODE 2 DIRECT DISTANCES
         // =================================================
 
         var sourceToPickupDistance =
@@ -461,12 +607,13 @@ public class CorridorRideMatchingService : IRideMatchingService
                 dropoff.Longitude);
 
         // =================================================
-        // MODE 2 — NEARBY / RANDOM ROUTE
+        // MODE 2 — NEARBY / RANDOM
         // =================================================
 
         var nearbyRouteMatch =
             sourceToPickupDistance <=
-                NearbySourceDistanceKm &&
+                NearbySourceDistanceKm
+            &&
             destinationToDropoffDistance <=
                 NearbyDestinationDistanceKm;
 
@@ -490,14 +637,15 @@ public class CorridorRideMatchingService : IRideMatchingService
             RoutePolylineCodec.Deserialize(
                 driverRoute.RoutePolylineJson);
 
-        // If stored polyline is missing/invalid,
-        // ask OSRM for road geometry.
+        // If no valid stored polyline exists,
+        // get road geometry from OSRM.
         if (pathPoints.Count < 2)
         {
           _log.LogInformation(
-              "MATCHING: Driver={DriverId} has no valid " +
-              "stored polyline. Requesting OSRM route.",
-              driverRoute.UserId);
+              "MATCHING: Driver={DriverId}, Route={RouteId} " +
+              "has no valid stored polyline. Requesting OSRM route.",
+              driverRoute.UserId,
+              driverRoute.Id);
 
           var geometry =
               await _routing.GetRouteAsync(
@@ -512,7 +660,76 @@ public class CorridorRideMatchingService : IRideMatchingService
         }
 
         // =================================================
-        // VARIABLES USED BY BOTH MODES
+        // DRIVER ROUTE ROAD DISTANCE DEBUG
+        //
+        // This is the distance along the route polyline,
+        // not the straight-line Haversine distance.
+        //
+        // This is the value that should be compared with
+        // Google Maps driving distance.
+        // =================================================
+
+        var driverRouteDistanceKm =
+            pathPoints.Count >= 2
+                ? pathPoints
+                    .Zip(
+                        pathPoints.Skip(1),
+                        (a, b) =>
+                            GeoMath.HaversineKm(
+                                a.Latitude,
+                                a.Longitude,
+                                b.Latitude,
+                                b.Longitude))
+                    .Sum()
+                : 0.0;
+
+        _log.LogInformation(
+            "ROUTE DISTANCE CHECK: Driver={DriverId}, Route={RouteId}, " +
+            "DriverRoute={DriverSource} -> {DriverDestination}, " +
+            "DriverRoadDistance={DriverRouteDistance:F2} km, " +
+            "PassengerRoute={PassengerSource} -> {PassengerDestination}, " +
+            "PassengerRoadDistance={PassengerRouteDistance}",
+            driverRoute.UserId,
+            driverRoute.Id,
+            driverRoute.SourceAddress,
+            driverRoute.DestinationAddress,
+            driverRouteDistanceKm,
+            passengerRoute.SourceAddress,
+            passengerRoute.DestinationAddress,
+            passengerRouteDistanceKm.HasValue
+                ? $"{passengerRouteDistanceKm.Value:F2} km"
+                : "N/A");
+
+        _log.LogInformation(
+            "ROUTE COORDINATES CHECK: Driver={DriverId}, Route={RouteId}, " +
+            "DriverStart={DriverStartLat:F6},{DriverStartLon:F6}, " +
+            "DriverEnd={DriverEndLat:F6},{DriverEndLon:F6}, " +
+            "PassengerStart={PassengerStartLat:F6},{PassengerStartLon:F6}, " +
+            "PassengerEnd={PassengerEndLat:F6},{PassengerEndLon:F6}",
+            driverRoute.UserId,
+            driverRoute.Id,
+            driverStart.Latitude,
+            driverStart.Longitude,
+            driverEnd.Latitude,
+            driverEnd.Longitude,
+            pickup.Latitude,
+            pickup.Longitude,
+            dropoff.Latitude,
+            dropoff.Longitude);
+
+        _log.LogInformation(
+            "ROAD DISTANCE COMPARISON: Driver={DriverId}, Route={RouteId}, " +
+            "DriverRoadDistance={DriverRoadDistance:F2} km, " +
+            "PassengerRoadDistance={PassengerRoadDistance}",
+            driverRoute.UserId,
+            driverRoute.Id,
+            driverRouteDistanceKm,
+            passengerRouteDistanceKm.HasValue
+                ? $"{passengerRouteDistanceKm.Value:F2} km"
+                : "N/A");
+
+        // =================================================
+        // MODE 1 VARIABLES
         // =================================================
 
         double pickupDist =
@@ -543,7 +760,9 @@ public class CorridorRideMatchingService : IRideMatchingService
             false;
 
         // =================================================
-        // MODE 1 — SAME / OVERLAPPING ROUTE
+        // MODE 1 — CORRIDOR / SAME ROUTE
+        //
+        // This mode ALWAYS has priority over Mode 2.
         // =================================================
 
         if (pathPoints.Count >= 2)
@@ -558,6 +777,8 @@ public class CorridorRideMatchingService : IRideMatchingService
                   dropoff,
                   pathPoints);
 
+          // Passenger destination is close to driver's
+          // final destination.
           var dropoffNearDriverEnd =
               GeoMath.HaversineKm(
                   dropoff.Latitude,
@@ -566,10 +787,12 @@ public class CorridorRideMatchingService : IRideMatchingService
                   driverEnd.Longitude)
               <= _opt.MaxDestinationDistanceKm;
 
+          // Passenger pickup is close to driver's route.
           var pickupInsideCorridor =
               pickupDist <=
               _opt.RouteCorridorRadiusKm;
 
+          // Passenger drop-off is also close to route.
           var dropoffInsideCorridor =
               dropoffDist <=
               _opt.RouteCorridorRadiusKm;
@@ -595,6 +818,8 @@ public class CorridorRideMatchingService : IRideMatchingService
                 dropoffProgress -
                 pickupProgress;
 
+            // Passenger pickup must occur before
+            // passenger drop-off along driver's route.
             if (progressGap > 0.01)
             {
               directionCosine =
@@ -636,7 +861,8 @@ public class CorridorRideMatchingService : IRideMatchingService
                     baseKm;
 
                 if (detourKm <=
-                        _opt.MaxDetourKm &&
+                        _opt.MaxDetourKm
+                    &&
                     detourPercent <=
                         _opt.MaxDetourPercentage)
                 {
@@ -650,6 +876,12 @@ public class CorridorRideMatchingService : IRideMatchingService
 
         // =================================================
         // FINAL MODE DECISION
+        //
+        // IMPORTANT:
+        //
+        // If corridor matches, it wins.
+        //
+        // Nearby is used only when corridor does not match.
         // =================================================
 
         var isNearbyMatch =
@@ -660,9 +892,10 @@ public class CorridorRideMatchingService : IRideMatchingService
             !isNearbyMatch)
         {
           _log.LogInformation(
-              "MATCH REJECTED: Driver={DriverId}. " +
+              "MATCH REJECTED: Driver={DriverId}, Route={RouteId}. " +
               "Neither corridor route nor nearby/random route criteria satisfied.",
-              driverRoute.UserId);
+              driverRoute.UserId,
+              driverRoute.Id);
 
           continue;
         }
@@ -673,11 +906,13 @@ public class CorridorRideMatchingService : IRideMatchingService
                 : "NEARBY/RANDOM";
 
         _log.LogInformation(
-            "MATCH ACCEPTED BY {MatchingMode}: Driver={DriverId}, " +
+            "MATCH ACCEPTED BY {MatchingMode}: " +
+            "Driver={DriverId}, Route={RouteId}, " +
             "SourceToPickup={SourceDistance:F2} km, " +
             "DestinationToDropoff={DestinationDistance:F2} km",
             matchingMode,
             driverRoute.UserId,
+            driverRoute.Id,
             sourceToPickupDistance,
             destinationToDropoffDistance);
 
@@ -713,10 +948,14 @@ public class CorridorRideMatchingService : IRideMatchingService
         if (corridorRouteMatch)
         {
           reasons.Add(
-              $"CORRIDOR MATCH: Pickup within {_opt.RouteCorridorRadiusKm} km of driver route ({pickupDist:F1} km)");
+              $"MODE 1 - CORRIDOR/SAME ROUTE MATCH");
 
           reasons.Add(
-              $"Drop-off within corridor ({dropoffDist:F1} km), route order {pickupProgress:P0} → {dropoffProgress:P0}");
+              $"Pickup within {_opt.RouteCorridorRadiusKm} km of driver route ({pickupDist:F1} km)");
+
+          reasons.Add(
+              $"Drop-off within corridor ({dropoffDist:F1} km), " +
+              $"route order {pickupProgress:P0} → {dropoffProgress:P0}");
 
           reasons.Add(
               $"Detour ~{detourKm:F1} km ({detourPercent:F1}%)");
@@ -727,13 +966,17 @@ public class CorridorRideMatchingService : IRideMatchingService
         else
         {
           reasons.Add(
-              $"NEARBY/RANDOM MATCH: Driver source → passenger pickup ({sourceToPickupDistance:F1} km)");
+              $"MODE 2 - NEARBY/RANDOM MATCH");
+
+          reasons.Add(
+              $"Driver source → passenger pickup ({sourceToPickupDistance:F1} km)");
 
           reasons.Add(
               $"Driver destination → passenger drop-off ({destinationToDropoffDistance:F1} km)");
 
           reasons.Add(
-              $"Both endpoints within {NearbySourceDistanceKm:F0} km nearby-route limit");
+              $"Both endpoints within " +
+              $"{NearbySourceDistanceKm:F0} km nearby-route limit");
         }
 
         reasons.Add(
@@ -762,7 +1005,10 @@ public class CorridorRideMatchingService : IRideMatchingService
 
         if (corridorRouteMatch)
         {
-          // Existing corridor scoring.
+          // =================================================
+          // MODE 1 SCORE
+          // =================================================
+
           var destinationDistanceForScore =
               Math.Min(
                   destinationDistance /
@@ -809,9 +1055,11 @@ public class CorridorRideMatchingService : IRideMatchingService
 
               +
 
-              (driverRoute.User.IsVerified
-                  ? _opt.WeightVerification
-                  : 0)
+              (
+                  driverRoute.User.IsVerified
+                      ? _opt.WeightVerification
+                      : 0
+              )
 
               +
 
@@ -830,7 +1078,7 @@ public class CorridorRideMatchingService : IRideMatchingService
         else
         {
           // =================================================
-          // MODE 2 SCORING
+          // MODE 2 SCORE
           // =================================================
 
           var sourceScore =
@@ -872,7 +1120,6 @@ public class CorridorRideMatchingService : IRideMatchingService
                   ? 1.0
                   : 0.0;
 
-          // Nearby route score.
           score =
               0.30 * sourceScore +
               0.30 * destinationScore +
@@ -882,7 +1129,10 @@ public class CorridorRideMatchingService : IRideMatchingService
               0.05;
         }
 
-        // Make sure score stays sensible.
+        // =================================================
+        // KEEP SCORE BETWEEN 0 AND 1
+        // =================================================
+
         score =
             Math.Max(
                 0,
@@ -891,97 +1141,65 @@ public class CorridorRideMatchingService : IRideMatchingService
                     score));
 
         // =================================================
-        // CREATE RIDE MATCH
+        // BUILD CANDIDATE
+        //
+        // IMPORTANT:
+        // We DO NOT save RideMatch here.
+        //
+        // We first compare all routes belonging to the
+        // same driver.
         // =================================================
 
-        var match =
-            new RideMatch
+        var candidate =
+            new MatchingCandidate
             {
-              Id =
-                    Guid.NewGuid(),
+              DriverRoute = driverRoute,
 
-              RideRequestId =
-                    request.Id,
+              Vehicle = vehicle,
 
-              MatchedUserId =
-                    driverRoute.UserId,
+              MatchingMode = matchingMode,
 
-              MatchScore =
-                    (decimal)Math.Round(
-                        score,
-                        2),
+              IsCorridorMatch =
+                    corridorRouteMatch,
 
-              CreatedAt =
-                    DateTime.UtcNow,
+              Score =
+                    score,
 
-              MatchedRouteId =
-                    driverRoute.Id,
+              SourceToPickupDistance =
+                    sourceToPickupDistance,
 
-              VehicleId =
-                    vehicle?.Id,
+              DestinationToDropoffDistance =
+                    destinationToDropoffDistance,
 
-              ScoreBreakdown =
-                    string.Join(
-                        " | ",
-                        reasons)
-            };
+              DestinationDistance =
+                    destinationDistance,
 
-        SetMatchPending(match);
+              PickupDistanceFromRoute =
+                    pickupDist,
 
-        _db.RideMatches.Add(match);
+              DropoffDistanceFromRoute =
+                    dropoffDist,
 
-        // =================================================
-        // DTO
-        // =================================================
+              PickupProgress =
+                    pickupProgress,
 
-        results.Add(
-            new CorridorMatchDto
-            {
-              MatchId =
-                    match.Id,
+              DropoffProgress =
+                    dropoffProgress,
 
-              RideRequestId =
-                    request.Id,
+              DetourKm =
+                    detourKm,
 
-              MatchedUserId =
-                    driverRoute.UserId,
+              DetourPercent =
+                    detourPercent,
 
-              DriverName =
-                    $"{driverRoute.User.FirstName} " +
-                    $"{driverRoute.User.LastName}".Trim(),
+              DirectionCosine =
+                    directionCosine,
 
-              SourcePlaceName =
-                    driverRoute.SourceAddress,
-
-              DestinationPlaceName =
-                    driverRoute.DestinationAddress,
-
-              DistanceFromRouteKm =
-                    Math.Round(
-                        corridorRouteMatch
-                            ? pickupDist
-                            : sourceToPickupDistance,
-                        2),
-
-              DestinationDistanceKm =
-                    Math.Round(
-                        corridorRouteMatch
-                            ? destinationDistance
-                            : destinationToDropoffDistance,
-                        2),
-
-              DepartureDifferenceMinutes =
-                    (int)Math.Round(
-                        timeDiff),
+              TimeDifferenceMinutes =
+                    timeDiff,
 
               AvailableSeats =
                     available,
-
-              RequestedSeats =
-                    request.SeatsNeeded,
-
-              MatchScore =
-                    match.MatchScore,
 
               WomenOnly =
                     womenOnly,
@@ -989,28 +1207,81 @@ public class CorridorRideMatchingService : IRideMatchingService
               IsVerified =
                     driverRoute.User.IsVerified,
 
-              MatchReasons =
-                    reasons,
+              Reasons =
+                    reasons
+            };
 
-              VehicleInfo =
-                    vehicle != null
-                        ? $"{vehicle.Make} " +
-                          $"{vehicle.Model} " +
-                          $"({vehicle.Color})"
-                        : null,
+        // =================================================
+        // DRIVER BEST ROUTE SELECTION
+        // =================================================
 
-              Status =
-                    "Pending"
-            });
+        if (!bestCandidateByDriver.TryGetValue(
+                driverRoute.UserId,
+                out var existingBest))
+        {
+          bestCandidateByDriver[
+              driverRoute.UserId] =
+              candidate;
+
+          _log.LogInformation(
+              "BEST MATCH CANDIDATE SELECTED: " +
+              "Driver={DriverId}, Route={RouteId}, " +
+              "Mode={Mode}, Score={Score:F2}",
+              driverRoute.UserId,
+              driverRoute.Id,
+              matchingMode,
+              score);
+        }
+        else if (IsBetterCandidate(
+                     candidate,
+                     existingBest))
+        {
+          bestCandidateByDriver[
+              driverRoute.UserId] =
+              candidate;
+
+          _log.LogInformation(
+              "BEST MATCH CANDIDATE REPLACED: " +
+              "Driver={DriverId}, " +
+              "OldRoute={OldRouteId}, " +
+              "OldMode={OldMode}, " +
+              "OldScore={OldScore:F2}, " +
+              "NewRoute={NewRouteId}, " +
+              "NewMode={NewMode}, " +
+              "NewScore={NewScore:F2}",
+              driverRoute.UserId,
+              existingBest.DriverRoute.Id,
+              existingBest.MatchingMode,
+              existingBest.Score,
+              driverRoute.Id,
+              matchingMode,
+              score);
+        }
+        else
+        {
+          _log.LogInformation(
+              "MATCH CANDIDATE NOT SELECTED: " +
+              "Driver={DriverId}, Route={RouteId}, " +
+              "Mode={Mode}, Score={Score:F2}. " +
+              "Existing best route remains {ExistingRouteId}.",
+              driverRoute.UserId,
+              driverRoute.Id,
+              matchingMode,
+              score,
+              existingBest.DriverRoute.Id);
+        }
 
         _log.LogInformation(
-            "MATCH FOUND: Mode={Mode}, Driver={DriverId}, " +
-            "Request={RequestId}, Score={Score}, " +
+            "MATCH CANDIDATE FOUND: " +
+            "Mode={Mode}, Driver={DriverId}, " +
+            "Request={RequestId}, Route={RouteId}, " +
+            "Score={Score}, " +
             "SourceToPickup={SourceDistance:F2} km, " +
             "DestinationToDropoff={DestinationDistance:F2} km",
             matchingMode,
             driverRoute.UserId,
             request.Id,
+            driverRoute.Id,
             score,
             sourceToPickupDistance,
             destinationToDropoffDistance);
@@ -1019,22 +1290,157 @@ public class CorridorRideMatchingService : IRideMatchingService
       {
         _log.LogError(
             ex,
-            "MATCH DRIVER ERROR: Driver={DriverId}, Request={RequestId}",
+            "MATCH DRIVER ERROR: Driver={DriverId}, " +
+            "Route={RouteId}, Request={RequestId}",
             driverRoute.UserId,
+            driverRoute.Id,
             request.Id);
       }
     }
 
     // =========================================================
-    // SAVE MATCHES
+    // CREATE ONLY FINAL BEST MATCH PER DRIVER
+    // =========================================================
+
+    var results =
+        new List<CorridorMatchDto>();
+
+    foreach (var candidate in bestCandidateByDriver.Values)
+    {
+      var driverRoute =
+          candidate.DriverRoute;
+
+      var match =
+          new RideMatch
+          {
+            Id =
+                  Guid.NewGuid(),
+
+            RideRequestId =
+                  request.Id,
+
+            MatchedUserId =
+                  driverRoute.UserId,
+
+            MatchScore =
+                  (decimal)Math.Round(
+                      candidate.Score,
+                      2),
+
+            CreatedAt =
+                  DateTime.UtcNow,
+
+            MatchedRouteId =
+                  driverRoute.Id,
+
+            VehicleId =
+                  candidate.Vehicle?.Id,
+
+            ScoreBreakdown =
+                  string.Join(
+                      " | ",
+                      candidate.Reasons)
+          };
+
+      SetMatchPending(match);
+
+      _db.RideMatches.Add(match);
+
+      // =====================================================
+      // FINAL MATCH DTO
+      // =====================================================
+
+      results.Add(
+          new CorridorMatchDto
+          {
+            MatchId =
+                  match.Id,
+
+            RideRequestId =
+                  request.Id,
+
+            MatchedUserId =
+                  driverRoute.UserId,
+
+            DriverName =
+                  $"{driverRoute.User.FirstName} " +
+                  $"{driverRoute.User.LastName}".Trim(),
+
+            SourcePlaceName =
+                  driverRoute.SourceAddress,
+
+            DestinationPlaceName =
+                  driverRoute.DestinationAddress,
+
+            DistanceFromRouteKm =
+                  Math.Round(
+                      candidate.IsCorridorMatch
+                          ? candidate.PickupDistanceFromRoute
+                          : candidate.SourceToPickupDistance,
+                      2),
+
+            DestinationDistanceKm =
+                  Math.Round(
+                      candidate.IsCorridorMatch
+                          ? candidate.DestinationDistance
+                          : candidate.DestinationToDropoffDistance,
+                      2),
+
+            DepartureDifferenceMinutes =
+                  (int)Math.Round(
+                      candidate.TimeDifferenceMinutes),
+
+            AvailableSeats =
+                  candidate.AvailableSeats,
+
+            RequestedSeats =
+                  request.SeatsNeeded,
+
+            MatchScore =
+                  match.MatchScore,
+
+            WomenOnly =
+                  candidate.WomenOnly,
+
+            IsVerified =
+                  candidate.IsVerified,
+
+            MatchReasons =
+                  candidate.Reasons,
+
+            VehicleInfo =
+                  candidate.Vehicle != null
+                      ? $"{candidate.Vehicle.Make} " +
+                        $"{candidate.Vehicle.Model} " +
+                        $"({candidate.Vehicle.Color})"
+                      : null,
+
+            Status =
+                  "Pending"
+          });
+
+      _log.LogInformation(
+          "FINAL MATCH SELECTED: " +
+          "Driver={DriverId}, Route={RouteId}, " +
+          "Mode={Mode}, Score={Score:F2}",
+          driverRoute.UserId,
+          driverRoute.Id,
+          candidate.MatchingMode,
+          candidate.Score);
+    }
+
+    // =========================================================
+    // SAVE ONLY FINAL MATCHES
     // =========================================================
 
     await _db.SaveChangesAsync(ct);
 
     _log.LogInformation(
         "MATCHING COMPLETED: Request={RequestId}, " +
-        "MatchesFound={MatchCount}",
+        "DriverCandidates={DriverCandidates}, " +
+        "FinalMatchesSaved={FinalMatches}",
         request.Id,
+        bestCandidateByDriver.Count,
         results.Count);
 
     return results
@@ -1061,6 +1467,68 @@ public class CorridorRideMatchingService : IRideMatchingService
     return Task.FromResult<
         IReadOnlyList<CorridorMatchDto>>(
             Array.Empty<CorridorMatchDto>());
+  }
+
+  // =============================================================
+  // BEST CANDIDATE COMPARISON
+  // =============================================================
+  //
+  // Priority:
+  //
+  // 1. CORRIDOR / SAME ROUTE
+  // 2. NEARBY / RANDOM
+  //
+  // If both are same mode:
+  // Higher score wins.
+  //
+  // This means:
+  //
+  // CORRIDOR 0.60
+  // beats
+  // NEARBY   0.90
+  //
+  // because same/overlapping route has priority.
+  // =============================================================
+
+  private static bool IsBetterCandidate(
+      MatchingCandidate newCandidate,
+      MatchingCandidate existingCandidate)
+  {
+    // Mode 1 always beats Mode 2.
+    if (newCandidate.IsCorridorMatch &&
+        !existingCandidate.IsCorridorMatch)
+    {
+      return true;
+    }
+
+    if (!newCandidate.IsCorridorMatch &&
+        existingCandidate.IsCorridorMatch)
+    {
+      return false;
+    }
+
+    // Same mode -> higher score wins.
+    if (newCandidate.Score >
+        existingCandidate.Score)
+    {
+      return true;
+    }
+
+    if (newCandidate.Score <
+        existingCandidate.Score)
+    {
+      return false;
+    }
+
+    // Final tie-breaker:
+    // better source proximity wins.
+    if (newCandidate.SourceToPickupDistance <
+        existingCandidate.SourceToPickupDistance)
+    {
+      return true;
+    }
+
+    return false;
   }
 
   // =============================================================
@@ -1111,6 +1579,59 @@ public class CorridorRideMatchingService : IRideMatchingService
   }
 
   // =============================================================
+  // SCHEDULE MATCHING
+  // =============================================================
+
+  private static bool MatchesSchedule(
+      RideSchedule schedule,
+      DateOnly travelDate,
+      DayOfWeek day)
+  {
+    // Schedule must be active.
+    if (!schedule.IsActive ||
+        schedule.IsDeleted)
+    {
+      return false;
+    }
+
+    // =========================================================
+    // WEEKDAY
+    // =========================================================
+
+    var dayMatches =
+        MatchesDay(
+            schedule,
+            day);
+
+    if (!dayMatches)
+    {
+      return false;
+    }
+
+    // =========================================================
+    // EFFECTIVE FROM
+    // =========================================================
+
+    if (schedule.EffectiveFrom.HasValue &&
+        travelDate < schedule.EffectiveFrom.Value)
+    {
+      return false;
+    }
+
+    // =========================================================
+    // EFFECTIVE TO
+    // =========================================================
+
+    if (schedule.EffectiveTo.HasValue &&
+        travelDate > schedule.EffectiveTo.Value)
+    {
+      return false;
+    }
+
+    return true;
+  }
+
+  // =============================================================
   // DAY MATCHING
   // =============================================================
 
@@ -1143,5 +1664,53 @@ public class CorridorRideMatchingService : IRideMatchingService
 
       _ => false
     };
+  }
+
+  // =============================================================
+  // INTERNAL MATCHING CANDIDATE
+  // =============================================================
+
+  private sealed class MatchingCandidate
+  {
+    public Route DriverRoute { get; set; } = null!;
+
+    public Vehicle? Vehicle { get; set; }
+
+    public string MatchingMode { get; set; } = string.Empty;
+
+    public bool IsCorridorMatch { get; set; }
+
+    public double Score { get; set; }
+
+    public double SourceToPickupDistance { get; set; }
+
+    public double DestinationToDropoffDistance { get; set; }
+
+    public double DestinationDistance { get; set; }
+
+    public double PickupDistanceFromRoute { get; set; }
+
+    public double DropoffDistanceFromRoute { get; set; }
+
+    public double PickupProgress { get; set; }
+
+    public double DropoffProgress { get; set; }
+
+    public double DetourKm { get; set; }
+
+    public double DetourPercent { get; set; }
+
+    public double DirectionCosine { get; set; }
+
+    public double TimeDifferenceMinutes { get; set; }
+
+    public int AvailableSeats { get; set; }
+
+    public bool WomenOnly { get; set; }
+
+    public bool IsVerified { get; set; }
+
+    public List<string> Reasons { get; set; } =
+        new();
   }
 }
