@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
+import { LocationApiService, PlaceSearchResult } from '../../core/services/location-api.service';
 import { environment } from '../../../environments/environment';
 
 import {
@@ -30,7 +31,7 @@ interface DayOption {
         <div>
           <div class="chips">
             <span class="chip">Daily Repeat Corridor</span>
-            <span class="chip gold">Islamabad &amp; Rawalpindi</span>
+            <span class="chip gold">Pakistan</span>
           </div>
 
           <h1>
@@ -38,7 +39,7 @@ interface DayOption {
           </h1>
 
           <p class="sub">
-            Pick your daily pickup and drop-off places across Rawalpindi and Islamabad.
+            Search and select pickup and drop-off places anywhere in Pakistan.
           </p>
         </div>
       </header>
@@ -97,7 +98,7 @@ interface DayOption {
 
           <label class="lbl">
             <span class="dot green">🟢</span>
-            Source / Pickup Place (Islamabad &amp; Rawalpindi)
+            Source / Pickup Place (Pakistan)
           </label>
 
           <div class="place-box">
@@ -110,9 +111,18 @@ interface DayOption {
                 name="srcSearch"
                 placeholder="Type any place (e.g. Saddar, F-10, Commercial Market, Faizabad)..."
                 (input)="onSourceSearchInput()"
-                (focus)="onSourceSearchInput()"
                 autocomplete="off"
               />
+
+              <button
+                type="button"
+                class="btn-detect"
+                (click)="searchSourcePlace()"
+                [disabled]="sourceSearching()"
+                title="Search place"
+              >
+                {{ sourceSearching() ? 'Searching...' : '🔎 Search' }}
+              </button>
 
               <button
                 type="button"
@@ -273,7 +283,7 @@ interface DayOption {
 
           <label class="lbl">
             <span class="dot red">🔴</span>
-            Destination / Drop-off Place (Islamabad &amp; Rawalpindi)
+            Destination / Drop-off Place (Pakistan)
           </label>
 
           <div class="place-box">
@@ -286,9 +296,27 @@ interface DayOption {
                 name="dstSearch"
                 placeholder="Type destination (e.g. NUST, Blue Area, Centaurus, FAST, Secretariat)..."
                 (input)="onDestSearchInput()"
-                (focus)="onDestSearchInput()"
                 autocomplete="off"
               />
+
+              <button
+                type="button"
+                class="btn-detect"
+                (click)="searchDestinationPlace()"
+                [disabled]="destSearching()"
+                title="Search place"
+              >
+                {{ destSearching() ? 'Searching...' : '🔎 Search' }}
+              </button>
+
+              <button
+                type="button"
+                class="btn-detect"
+                (click)="detectCurrentLocationForDestination()"
+                title="Use Current GPS Location"
+              >
+                📍 GPS
+              </button>
 
             </div>
 
@@ -1077,6 +1105,7 @@ interface DayOption {
 export class RouteFormComponent implements OnInit {
 
   private http = inject(HttpClient);
+  private locationApi = inject(LocationApiService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
 
@@ -1102,6 +1131,12 @@ export class RouteFormComponent implements OnInit {
 
   sourceSuggestions = signal<CommutePlace[]>([]);
   destSuggestions = signal<CommutePlace[]>([]);
+
+  sourceSearching = signal(false);
+  destSearching = signal(false);
+
+  private sourceSelectedAddress = '';
+  private destinationSelectedAddress = '';
 
   activeSourceArea: string | null = null;
   activeDestArea: string | null = null;
@@ -1232,9 +1267,11 @@ export class RouteFormComponent implements OnInit {
 
           this.sourceAddress = d.sourceAddress || '';
           this.sourceSearch = d.sourceAddress || '';
+          this.sourceSelectedAddress = this.sourceAddress;
 
           this.destinationAddress = d.destinationAddress || '';
           this.destinationSearch = d.destinationAddress || '';
+          this.destinationSelectedAddress = this.destinationAddress;
 
           this.sourceLatitude =
             d?.sourceLatitude ?? null;
@@ -1342,16 +1379,61 @@ export class RouteFormComponent implements OnInit {
 
     const q = this.sourceSearch.trim();
 
-    if (!q) {
+    // If the user edits the text after selecting a place, invalidate the
+    // previous coordinates so we never save coordinates for a different name.
+    if (q !== this.sourceSelectedAddress) {
+      this.sourceLatitude = null;
+      this.sourceLongitude = null;
+      this.sourceAddress = '';
+    }
 
-      this.sourceSuggestions.set([]);
+    this.sourceSuggestions.set([]);
+  }
+
+  searchSourcePlace(): void {
+
+    const q = this.sourceSearch.trim();
+
+    if (q.length < 2) {
+      this.err.set('Please enter at least 2 characters for the pickup place.');
       return;
     }
 
-    const matches =
-      findMatchingTwinCitiesPlaces(q, 8);
+    this.err.set('');
+    this.sourceSearching.set(true);
 
-    this.sourceSuggestions.set(matches);
+    this.locationApi.search(q).subscribe({
+      next: (response) => {
+        const results = response?.data ?? [];
+
+        const mapped = results.map((p: PlaceSearchResult) => this.toCommutePlace(p));
+
+        this.sourceSuggestions.set(mapped);
+        this.sourceSearching.set(false);
+
+        if (!mapped.length) {
+          this.err.set(`No place found for "${q}". Try adding the city, e.g. "${q}, Islamabad".`);
+        }
+      },
+      error: (error) => {
+        console.error('Source place search failed:', error);
+        this.sourceSearching.set(false);
+        this.sourceSuggestions.set([]);
+        this.err.set('Source place search failed. Please try again.');
+      }
+    });
+  }
+
+  private toCommutePlace(p: PlaceSearchResult): CommutePlace {
+    const parts = p.displayName.split(',').map((x: string) => x.trim()).filter(Boolean);
+
+    return {
+      name: p.displayName,
+      lat: p.latitude,
+      lng: p.longitude,
+      area: parts.length > 1 ? parts[parts.length - 2] : 'Pakistan',
+      category: 'Geocoded place'
+    };
   }
 
   filterSourceByArea(area: string): void {
@@ -1405,6 +1487,7 @@ export class RouteFormComponent implements OnInit {
 
     this.sourceLatitude = p.lat;
     this.sourceLongitude = p.lng;
+    this.sourceSelectedAddress = p.name;
 
     this.sourceSuggestions.set([]);
     this.activeSourceArea = null;
@@ -1425,6 +1508,7 @@ export class RouteFormComponent implements OnInit {
 
       this.sourceAddress = name;
       this.sourceSearch = name;
+      this.sourceSelectedAddress = name;
     }
   }
 
@@ -1489,6 +1573,40 @@ export class RouteFormComponent implements OnInit {
     );
   }
 
+  detectCurrentLocationForDestination(): void {
+
+    if (!navigator.geolocation) {
+      this.err.set('Geolocation is not supported by your browser.');
+      return;
+    }
+
+    this.busy.set(true);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = +pos.coords.latitude.toFixed(6);
+        const lng = +pos.coords.longitude.toFixed(6);
+
+        this.destinationLatitude = lat;
+        this.destinationLongitude = lng;
+
+        const closest = findClosestTwinCitiesPlace(lat, lng);
+
+        this.destinationAddress = closest.name;
+        this.destinationSearch = closest.name;
+        this.destinationSelectedAddress = closest.name;
+
+        this.busy.set(false);
+        this.msg.set(`Destination resolved to nearest known place: ${closest.name}`);
+      },
+      () => {
+        this.busy.set(false);
+        this.err.set('Unable to retrieve your current location.');
+      },
+      { timeout: 10000, enableHighAccuracy: true }
+    );
+  }
+
   // ---------------------------------------------------------
   // DESTINATION PLACE METHODS
   // ---------------------------------------------------------
@@ -1497,19 +1615,49 @@ export class RouteFormComponent implements OnInit {
 
     this.activeDestArea = null;
 
-    const q =
-      this.destinationSearch.trim();
+    const q = this.destinationSearch.trim();
 
-    if (!q) {
+    if (q !== this.destinationSelectedAddress) {
+      this.destinationLatitude = null;
+      this.destinationLongitude = null;
+      this.destinationAddress = '';
+    }
 
-      this.destSuggestions.set([]);
+    this.destSuggestions.set([]);
+  }
+
+  searchDestinationPlace(): void {
+
+    const q = this.destinationSearch.trim();
+
+    if (q.length < 2) {
+      this.err.set('Please enter at least 2 characters for the destination place.');
       return;
     }
 
-    const matches =
-      findMatchingTwinCitiesPlaces(q, 8);
+    this.err.set('');
+    this.destSearching.set(true);
 
-    this.destSuggestions.set(matches);
+    this.locationApi.search(q).subscribe({
+      next: (response) => {
+        const results = response?.data ?? [];
+
+        const mapped = results.map((p: PlaceSearchResult) => this.toCommutePlace(p));
+
+        this.destSuggestions.set(mapped);
+        this.destSearching.set(false);
+
+        if (!mapped.length) {
+          this.err.set(`No place found for "${q}". Try adding the city, e.g. "${q}, Islamabad".`);
+        }
+      },
+      error: (error) => {
+        console.error('Destination place search failed:', error);
+        this.destSearching.set(false);
+        this.destSuggestions.set([]);
+        this.err.set('Destination place search failed. Please try again.');
+      }
+    });
   }
 
   filterDestByArea(area: string): void {
@@ -1563,6 +1711,7 @@ export class RouteFormComponent implements OnInit {
 
     this.destinationLatitude = p.lat;
     this.destinationLongitude = p.lng;
+    this.destinationSelectedAddress = p.name;
 
     this.destSuggestions.set([]);
     this.activeDestArea = null;
@@ -1583,6 +1732,7 @@ export class RouteFormComponent implements OnInit {
 
       this.destinationAddress = name;
       this.destinationSearch = name;
+      this.destinationSelectedAddress = name;
     }
   }
 
@@ -1612,23 +1762,33 @@ export class RouteFormComponent implements OnInit {
       (this.destinationAddress ||
         this.destinationSearch).trim();
 
-    // Validate source
+    // A route must use coordinates selected from a real geocoding result.
+    // Never fall back to Pakistan default coordinates.
     if (!src) {
-
-      this.err.set(
-        'Please select or enter a source / pickup place in Islamabad or Rawalpindi.'
-      );
-
+      this.err.set('Please search and select a source / pickup place.');
       return;
     }
 
-    // Validate destination
     if (!dst) {
+      this.err.set('Please search and select a destination place.');
+      return;
+    }
 
-      this.err.set(
-        'Please select or enter a destination place in Islamabad or Rawalpindi.'
-      );
+    if (
+      this.sourceLatitude == null ||
+      this.sourceLongitude == null ||
+      this.sourceSelectedAddress !== src
+    ) {
+      this.err.set('Please press Search and select the source place from the results.');
+      return;
+    }
 
+    if (
+      this.destinationLatitude == null ||
+      this.destinationLongitude == null ||
+      this.destinationSelectedAddress !== dst
+    ) {
+      this.err.set('Please press Search and select the destination place from the results.');
       return;
     }
 
@@ -1639,76 +1799,10 @@ export class RouteFormComponent implements OnInit {
       );
 
     if (!hasAnyDay) {
-
       this.err.set(
         'Please select at least one active day of the week.'
       );
-
       return;
-    }
-
-    // -------------------------------------------------------
-    // RESOLVE SOURCE COORDINATES
-    // -------------------------------------------------------
-
-    if (
-      this.sourceLatitude == null ||
-      this.sourceLongitude == null ||
-      this.sourceAddress !== src
-    ) {
-
-      const matched =
-        findMatchingTwinCitiesPlaces(
-          src,
-          1
-        );
-
-      this.sourceLatitude =
-        matched.length
-          ? matched[0].lat
-          : 33.6844;
-
-      this.sourceLongitude =
-        matched.length
-          ? matched[0].lng
-          : 73.0479;
-
-      this.sourceAddress =
-        matched.length
-          ? matched[0].name
-          : src;
-    }
-
-    // -------------------------------------------------------
-    // RESOLVE DESTINATION COORDINATES
-    // -------------------------------------------------------
-
-    if (
-      this.destinationLatitude == null ||
-      this.destinationLongitude == null ||
-      this.destinationAddress !== dst
-    ) {
-
-      const matched =
-        findMatchingTwinCitiesPlaces(
-          dst,
-          1
-        );
-
-      this.destinationLatitude =
-        matched.length
-          ? matched[0].lat
-          : 33.7126;
-
-      this.destinationLongitude =
-        matched.length
-          ? matched[0].lng
-          : 73.0583;
-
-      this.destinationAddress =
-        matched.length
-          ? matched[0].name
-          : dst;
     }
 
     // -------------------------------------------------------

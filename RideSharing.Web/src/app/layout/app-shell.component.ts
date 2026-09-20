@@ -1,8 +1,9 @@
 import { Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { Subscription } from 'rxjs';
+import { filter } from 'rxjs/operators';
 import { AuthService } from '../core/services/auth.service';
 import { SignalRService } from '../core/services/signalr.service';
 import { RsIconComponent } from '../shared/rs-icon.component';
@@ -41,7 +42,7 @@ import { environment } from '../../environments/environment';
                 <app-rs-icon name="wallet" [size]="15"></app-rs-icon>
                 <span>Wallet</span>
               </a>
-              <a routerLink="/app/notifications" class="btn-icon bell" title="Notifications">
+              <a routerLink="/app/notifications" class="btn-icon bell" title="Notifications" (click)="refreshUnread()">
                 <app-rs-icon name="bell" [size]="17"></app-rs-icon>
                 @if (unread() > 0) {
                   <span class="badge">{{ unread() > 9 ? '9+' : unread() }}</span>
@@ -71,7 +72,7 @@ import { environment } from '../../environments/environment';
             <app-rs-icon name="wallet" [size]="14"></app-rs-icon>
             Wallet
           </a>
-          <a routerLink="/app/notifications" class="btn-icon bell">
+          <a routerLink="/app/notifications" class="btn-icon bell" (click)="refreshUnread()">
             <app-rs-icon name="bell" [size]="16"></app-rs-icon>
             @if (unread() > 0) {
               <span class="badge">{{ unread() > 9 ? '9+' : unread() }}</span>
@@ -93,9 +94,12 @@ import { environment } from '../../environments/environment';
 
       <nav class="tabs" aria-label="Main navigation">
         @for (t of tabs(); track t.path) {
-          <a [routerLink]="t.path" routerLinkActive="active">
+          <a [routerLink]="t.path" routerLinkActive="active" class="tab-link">
             <app-rs-icon [name]="t.icon" [size]="14"></app-rs-icon>
             <span>{{ t.label }}</span>
+            @if (tabBadge(t.path) > 0) {
+              <span class="tab-badge">{{ tabBadge(t.path) > 9 ? '9+' : tabBadge(t.path) }}</span>
+            }
           </a>
         }
       </nav>
@@ -135,6 +139,8 @@ import { environment } from '../../environments/environment';
     .tabs a { display: inline-flex; align-items: center; gap: 0.32rem; flex: 0 0 auto; white-space: nowrap; padding: 0.48rem 0.85rem; border-radius: 999px; font-size: 0.78rem; font-weight: 700; color: #64748b; text-decoration: none; background: #fff; border: 1px solid #eef2f7; box-shadow: 0 1px 2px rgba(15,23,42,0.03); }
     .tabs a:hover { color: #0d9f6e; border-color: #c6f0d8; background: #f0fdf6; }
     .tabs a.active { color: #0b7f58; background: linear-gradient(180deg, #e8f8f1, #dcf7ea); border-color: #86efac; box-shadow: 0 2px 8px rgba(13,159,110,0.15); }
+    .tab-link { position: relative; }
+    .tab-badge { margin-left: 0.15rem; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: #e11d48; color: #fff; font-size: 0.62rem; font-weight: 800; display: inline-grid; place-items: center; }
     .main { min-height: 50vh; padding: 0.85rem 0.75rem 1.5rem; max-width: 1100px; margin: 0 auto; }
     .toast { position: fixed; right: 1rem; bottom: 1rem; z-index: 100; max-width: 320px; padding: 0.85rem 1rem; border-radius: 14px; background: #0f172a; color: #fff; box-shadow: 0 12px 40px rgba(0,0,0,0.25); cursor: pointer; display: flex; flex-direction: column; gap: 0.25rem; }
     .toast strong { font-size: 0.85rem; }
@@ -163,6 +169,8 @@ export class AppShellComponent implements OnInit, OnDestroy {
   private signalR = inject(SignalRService);
 
   unread = signal(0);
+  rideUnread = signal(0);
+  chatUnread = signal(0);
   hubState = signal<'disconnected' | 'connecting' | 'connected' | 'reconnecting'>('disconnected');
   toast = signal<{ title: string; body: string } | null>(null);
 
@@ -173,27 +181,43 @@ export class AppShellComponent implements OnInit, OnDestroy {
     this.refreshUnread();
     try {
       await this.signalR.connect();
-      this.hubState.set('connected');
+      this.hubState.set(this.signalR.connectionState());
     } catch {
       this.hubState.set('disconnected');
     }
 
-    // Live user notifications (match accepted, ride updates, etc.)
+    // Open Alerts / Rides / Chat → clear related badges
+    this.subs.push(
+      this.router.events.pipe(filter((e) => e instanceof NavigationEnd)).subscribe((e: any) => {
+        const url = String(e.urlAfterRedirects || e.url || '');
+        if (url.includes('/notifications')) {
+          this.refreshUnread();
+        }
+        if (url.includes('/rides')) {
+          this.rideUnread.set(0);
+        }
+        if (url.includes('/chat')) {
+          this.chatUnread.set(0);
+        }
+      })
+    );
+
     this.subs.push(
       this.signalR.userNotification$.subscribe((n: any) => {
         this.unread.update((c) => c + 1);
+        this.bumpTypeBadges(n);
         this.toast.set({
           title: n?.title || n?.Title || 'Notification',
-          body: n?.body || n?.Body || ''
+          body: n?.body || n?.Body || n?.message || ''
         });
         setTimeout(() => this.toast.set(null), 6000);
       })
     );
 
-    // Also listen to ride-scoped notifications if connected to a ride group
     this.subs.push(
       this.signalR.notification$.subscribe((n: any) => {
         this.unread.update((c) => c + 1);
+        this.rideUnread.update((c) => c + 1);
         this.toast.set({
           title: n?.title || n?.Title || 'Ride update',
           body: n?.body || n?.Body || n?.message || ''
@@ -201,10 +225,39 @@ export class AppShellComponent implements OnInit, OnDestroy {
         setTimeout(() => this.toast.set(null), 6000);
       })
     );
+
+    this.subs.push(
+      this.signalR.chatMessage$.subscribe(() => {
+        this.chatUnread.update((c) => c + 1);
+      })
+    );
   }
 
   ngOnDestroy(): void {
     this.subs.forEach((s) => s.unsubscribe());
+  }
+
+  private bumpTypeBadges(n: any): void {
+    const t = `${n?.type || ''} ${n?.title || ''} ${n?.body || ''} ${n?.message || ''}`.toLowerCase();
+    if (t.includes('chat') || t.includes('message')) {
+      this.chatUnread.update((c) => c + 1);
+    } else if (
+      t.includes('ride') ||
+      t.includes('match') ||
+      t.includes('driver') ||
+      t.includes('passenger') ||
+      t.includes('arriv') ||
+      t.includes('confirm')
+    ) {
+      this.rideUnread.update((c) => c + 1);
+    }
+  }
+
+  tabBadge(path: string): number {
+    if (path.includes('/rides')) return this.rideUnread();
+    if (path.includes('/chat')) return this.chatUnread();
+    if (path.includes('/notifications')) return this.unread();
+    return 0;
   }
 
   refreshUnread(): void {
@@ -214,7 +267,6 @@ export class AppShellComponent implements OnInit, OnDestroy {
         this.unread.set(Number(n) || 0);
       },
       error: () => {
-        // fallback list endpoint
         this.http.get<any>(`${this.api}/notifications`).subscribe({
           next: (r) => {
             const list = r?.data ?? r ?? [];

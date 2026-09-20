@@ -23,13 +23,16 @@ export interface NearbyDriverDto {
   distanceKm: number; recordedAt: string; vehicleInfo?: string;
 }
 export interface PlaceSearchResult {
-  placeId: string; description: string; latitude?: number; longitude?: number;
+  displayName: string;
+  latitude: number;
+  longitude: number;
 }
 
 @Injectable({ providedIn: 'root' })
 export class LocationApiService {
   private http = inject(HttpClient);
   private base = `${environment.apiUrl}/locations`;
+  private geoBase = `${environment.apiUrl}/geo`;
 
   updateMine(body: UpdateLocationRequest) {
     return this.http.post<ApiResponse<UserLocationDto>>(`${this.base}/me`, body);
@@ -47,7 +50,7 @@ export class LocationApiService {
     return this.http.get<ApiResponse<NearbyDriverDto[]>>(`${this.base}/nearby-drivers`, { params });
   }
   search(q: string) {
-    return this.http.get<ApiResponse<PlaceSearchResult[]>>(`${this.base}/search`, {
+    return this.http.get<ApiResponse<PlaceSearchResult[]>>(`${this.geoBase}/search`, {
       params: new HttpParams().set('q', q)
     });
   }

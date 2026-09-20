@@ -1,5 +1,5 @@
 import {
-  Component, OnInit, OnDestroy, AfterViewInit, inject, signal, computed,
+  Component, OnInit, OnDestroy, AfterViewInit, inject, signal,
   ElementRef, ViewChild, NgZone
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -7,7 +7,6 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
-import { findClosestTwinCitiesPlace } from '../../core/constants/places.constants';
 
 declare const L: any;
 
@@ -88,52 +87,43 @@ declare const L: any;
             <strong>{{ n.name || n.userName || 'Driver' }}</strong>
             <span class="muted">{{ n.distanceKm != null ? (n.distanceKm | number:'1.1-1') + ' km' : '' }}</span>
           </div>
-        } @empty {
-          <p class="muted">Share location, then refresh. Drivers who shared location may appear.</p>
         }
       </section>
     </div>
   `,
   styles: [`
+    .rs-page { padding: 1rem 1.25rem 2rem; max-width: 1100px; margin: 0 auto; }
     .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
     .chips { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
-    .chip {
-      font-size: 0.72rem; font-weight: 800; padding: 0.25rem 0.65rem; border-radius: 999px;
-      background: #e8f8f1; color: #0b7f58;
-    }
-    .chip.gold { background: #fff7cc; color: #a16207; }
-    h1 { margin: 0; font-size: 1.4rem; font-weight: 800; }
-    h2 { margin: 0 0 0.65rem; font-size: 1.05rem; font-weight: 800; }
-    .sub { margin: 0.3rem 0 0; color: #64748b; font-size: 0.9rem; }
+    .chip { font-size: 0.72rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 999px; background: #ecfdf5; color: #047857; }
+    .chip.gold { background: #fffbeb; color: #b45309; }
+    h1 { margin: 0; font-size: 1.55rem; color: #0f172a; }
+    .sub { margin: 0.25rem 0 0; color: #64748b; font-size: 0.92rem; }
     .layout {
       display: grid;
-      grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
-      gap: 0.9rem;
-      margin-bottom: 0.9rem;
-      align-items: start;
+      grid-template-columns: minmax(260px, 320px) 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
     }
-    @media (max-width: 900px) {
-      .layout { grid-template-columns: 1fr; }
-    }
-    .card {
-      background: #fff; border: 1px solid #b7ebc9; border-radius: 16px; padding: 1.1rem;
-      box-shadow: 0 6px 18px rgba(15,23,42,0.04); margin-bottom: 0.9rem;
-    }
+    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 1rem 1.1rem; }
+    .panel h2 { margin: 0 0 0.75rem; font-size: 1rem; }
     .btn {
       display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
-      padding: 0.5rem 1rem; border-radius: 999px; font-weight: 800; font-size: 0.88rem;
-      border: none; cursor: pointer; text-decoration: none; margin-bottom: 0.45rem;
+      border-radius: 12px; border: none; font-weight: 700; cursor: pointer; text-decoration: none;
+      padding: 0.5rem 1rem; font-size: 0.9rem;
     }
+    .btn.full { width: 100%; margin-bottom: 0.5rem; }
     .btn.primary { background: #0d9f6e; color: #fff; }
-    .btn.ghost { background: #fff; border: 1px solid #e2e8f0; color: #0f172a; }
-    .full { width: 100%; }
+    .btn.ghost { background: #f1f5f9; color: #0f172a; }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
     .lbl { display: block; font-size: 0.78rem; font-weight: 700; color: #64748b; margin: 0.65rem 0; }
     .inp {
       display: block; width: 100%; margin-top: 0.3rem; min-height: 44px;
-      padding: 0.5rem 0.75rem; border-radius: 12px; border: 1px solid #e2e8f0;
+      border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.4rem 0.65rem; font-size: 0.9rem;
     }
     .cur-place {
-      margin-top: 0.65rem; padding: 0.65rem 0.85rem; border-radius: 12px;
+      margin-top: 0.75rem; padding: 0.75rem; border-radius: 12px;
       background: #ecfdf5; border: 1px solid #a7f3d0;
     }
     .cp-lbl { display: block; font-size: 0.68rem; font-weight: 800; color: #065f46; margin-bottom: 0.2rem; }
@@ -194,14 +184,8 @@ export class GpsPageComponent implements OnInit, OnDestroy, AfterViewInit {
   selectedRouteId = '';
   lat = signal<number | null>(null);
   lng = signal<number | null>(null);
-  currentPlaceName = computed(() => {
-    const la = this.lat();
-    const ln = this.lng();
-    if (la != null && ln != null) {
-      return findClosestTwinCitiesPlace(la, ln).name;
-    }
-    return '';
-  });
+  /** Address from reverse geocode — any place, any day (no hardcoded list) */
+  currentPlaceName = signal('');
   routeSource = signal('');
   routeDest = signal('');
   srcLat = signal<number | null>(null);
@@ -232,11 +216,7 @@ export class GpsPageComponent implements OnInit, OnDestroy, AfterViewInit {
     this.resizeObs?.disconnect();
     this.resizeObs = null;
     if (this.map) {
-      try {
-        this.map.remove();
-      } catch {
-        // ignore
-      }
+      try { this.map.remove(); } catch { /* ignore */ }
       this.map = null;
     }
   }
@@ -276,11 +256,7 @@ export class GpsPageComponent implements OnInit, OnDestroy, AfterViewInit {
     if (!this.map) return;
     this.zone.runOutsideAngular(() => {
       requestAnimationFrame(() => {
-        try {
-          this.map.invalidateSize();
-        } catch {
-          // ignore
-        }
+        try { this.map.invalidateSize(); } catch { /* ignore */ }
       });
     });
   }
@@ -328,12 +304,6 @@ export class GpsPageComponent implements OnInit, OnDestroy, AfterViewInit {
         bounds.push([dla, dln]);
       }
 
-      if (sla != null && sln != null && dla != null && dln != null) {
-        L.polyline([[sla, sln], [dla, dln]], {
-          color: '#0d9f6e', weight: 4, opacity: 0.85
-        }).addTo(this.layer);
-      }
-
       if (bounds.length > 1) {
         this.map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
       } else if (bounds.length === 1) {
@@ -345,25 +315,68 @@ export class GpsPageComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   useMyLocation(): void {
-    this.err.set(''); this.msg.set('');
+    this.err.set('');
+    this.msg.set('');
+    this.currentPlaceName.set('');
+
     if (!navigator.geolocation) {
       this.err.set('Geolocation not supported');
       return;
     }
+
     this.busy.set(true);
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        this.lat.set(+pos.coords.latitude.toFixed(6));
-        this.lng.set(+pos.coords.longitude.toFixed(6));
-        this.busy.set(false);
-        this.msg.set('Location captured');
+        const la = +pos.coords.latitude.toFixed(6);
+        const ln = +pos.coords.longitude.toFixed(6);
+        const acc = Math.round(pos.coords.accuracy || 0);
+
+        this.lat.set(la);
+        this.lng.set(ln);
+        this.msg.set(`Location captured (±${acc} m)`);
+
+        if (this.map) {
+          this.zone.runOutsideAngular(() => {
+            try { this.map.setView([la, ln], 15); } catch { /* ignore */ }
+          });
+        }
         this.redraw();
+
+        // Address from coordinates — any place in the world, no place list
+        this.http
+          .get<any>(`${this.api}/geo/reverse`, {
+            params: { lat: String(la), lng: String(ln) }
+          })
+          .subscribe({
+            next: (r) => {
+              const d = r?.data ?? r;
+              const name =
+                d?.displayName ||
+                d?.DisplayName ||
+                d?.address ||
+                d?.formattedAddress ||
+                `${la}, ${ln}`;
+              this.currentPlaceName.set(String(name));
+              this.busy.set(false);
+            },
+            error: () => {
+              this.currentPlaceName.set(`${la}, ${ln}`);
+              this.busy.set(false);
+            }
+          });
       },
-      () => {
+      (err) => {
         this.busy.set(false);
-        this.err.set('Location permission denied or unavailable');
+        if (err?.code === 1) {
+          this.err.set('Location permission denied. Allow location for this site.');
+        } else if (err?.code === 3) {
+          this.err.set('GPS timeout. Try outdoors or on a phone.');
+        } else {
+          this.err.set('Location permission denied or unavailable');
+        }
       },
-      { enableHighAccuracy: true, timeout: 12000 }
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
     );
   }
 

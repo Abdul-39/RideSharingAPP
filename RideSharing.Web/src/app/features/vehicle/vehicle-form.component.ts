@@ -102,20 +102,26 @@ export class VehicleFormComponent implements OnInit {
   msg = signal('');
 
   ngOnInit(): void {
-    this.id = this.route.snapshot.paramMap.get('id') || '';
-    this.http.get<any>(`${this.api}/vehicle-types`).subscribe({
-      next: (r) => {
-        const d = r?.data ?? r;
-        this.types.set(Array.isArray(d) ? d : d?.items ?? []);
-      },
-      error: () => {
-        this.types.set([
-          { id: 'car', name: 'Car' },
-          { id: 'bike', name: 'Bike' },
-          { id: 'van', name: 'Van' }
-        ]);
+  this.id = this.route.snapshot.paramMap.get('id') || '';
+
+  // CORRECT endpoint
+  this.http.get<any>(`${this.api}/vehicles/types`).subscribe({
+    next: (r) => {
+      const d = r?.data ?? r;
+      const list = Array.isArray(d) ? d : d?.items ?? [];
+      this.types.set(list);
+      if (!this.vehicleTypeId && list.length) {
+        this.vehicleTypeId = list[0].id; // real Guid
       }
-    });
+    },
+    error: (e) => {
+      this.err.set('Could not load vehicle types. Is API running?');
+      this.types.set([]); // NO fake car/bike ids
+    }
+  });
+
+  // ... rest edit load same
+
     if (this.id) {
       this.http.get<any>(`${this.api}/vehicles/${this.id}`).subscribe({
         next: (r) => {

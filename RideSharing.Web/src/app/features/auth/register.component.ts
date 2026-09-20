@@ -54,9 +54,10 @@ import { AuthService } from '../../core/services/auth.service';
         </label>
         <label class="lbl">Gender
           <select class="inp" [(ngModel)]="gender" name="gender">
-            <option value="">Optional</option>
-            <option value="Male">Male</option>
-            <option value="Female">Female</option>
+            <option [ngValue]="4">Prefer not to say</option>
+            <option [ngValue]="1">Male</option>
+            <option [ngValue]="2">Female</option>
+            <option [ngValue]="3">Other</option>
           </select>
         </label>
 
@@ -121,13 +122,16 @@ export class RegisterComponent {
   password = '';
   confirm = '';
   role = 'Passenger';
-  gender = '';
+  /** Backend enum: Male=1, Female=2, Other=3, PreferNotToSay=4 */
+  gender = 4;
   busy = signal(false);
   err = signal('');
   msg = signal('');
 
   register(): void {
-    this.err.set(''); this.msg.set('');
+    this.err.set('');
+    this.msg.set('');
+
     if (!this.email || !this.password || !this.firstName) {
       this.err.set('Fill required fields');
       return;
@@ -136,19 +140,23 @@ export class RegisterComponent {
       this.err.set('Passwords do not match');
       return;
     }
+
     this.busy.set(true);
+
     const body = {
-      firstName: this.firstName,
-      lastName: this.lastName,
-      email: this.email,
-      phoneNumber: this.phone,
+      firstName: this.firstName.trim(),
+      lastName: this.lastName.trim(),
+      email: this.email.trim(),
+      phoneNumber: this.phone?.trim() || null,
       password: this.password,
       confirmPassword: this.confirm,
       role: this.role,
-      gender: this.gender || undefined
+      gender: Number(this.gender) // must be 1 | 2 | 3 | 4 — not "Male"
     };
+
     const a: any = this.auth;
     const call = a.register?.(body) ?? a.signUp?.(body);
+
     if (call?.subscribe) {
       call.subscribe({
         next: () => {
@@ -158,7 +166,15 @@ export class RegisterComponent {
         },
         error: (e: any) => {
           this.busy.set(false);
-          this.err.set(e.error?.message || e.message || 'Registration failed');
+          const errors = e.error?.errors;
+          let detail = e.error?.message || e.message || 'Registration failed';
+          if (errors && typeof errors === 'object') {
+            const parts = Object.entries(errors)
+              .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+              .join(' | ');
+            if (parts) detail = parts;
+          }
+          this.err.set(detail);
         }
       });
     } else {

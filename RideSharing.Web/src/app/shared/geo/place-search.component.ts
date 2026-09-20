@@ -1,8 +1,7 @@
 import { Component, EventEmitter, Input, Output, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { HttpClient } from '@angular/common/http';
-import { environment } from '../../../environments/environment';
+import { LocationApiService } from '../../core/services/location-api.service';
 
 export interface PlaceSelection {
   displayName: string;
@@ -82,8 +81,7 @@ export interface PlaceSelection {
   `]
 })
 export class PlaceSearchComponent {
-  private http = inject(HttpClient);
-  private api = (environment.apiUrl || '/api/v1').replace(/\/$/, '');
+  private locationApi = inject(LocationApiService);
 
   @Input() label = 'Place';
   @Input() placeholder = 'Search place in Pakistan…';
@@ -96,45 +94,36 @@ export class PlaceSearchComponent {
   err = signal('');
 
   search(): void {
-    if (!this.query.trim()) return;
-    this.busy.set(true); this.err.set('');
-    // Prefer backend proxy if you add GET /api/v1/geo/search?q=
-    this.http.get<any>(`${this.api}/geo/search`, { params: { q: this.query.trim() } }).subscribe({
+    const q = this.query.trim();
+    if (q.length < 3) {
+      this.err.set('Please enter at least 3 characters.');
+      return;
+    }
+
+    this.busy.set(true);
+    this.err.set('');
+
+    // Always use our ASP.NET API proxy. The backend owns the Nominatim
+    // integration so the browser never calls the public geocoder directly.
+    this.locationApi.search(q).subscribe({
       next: (r) => {
-        const d = r?.data ?? r;
-        const list = (Array.isArray(d) ? d : []).map((x: any) => ({
-          displayName: x.displayName || x.DisplayName,
-          latitude: x.latitude ?? x.Latitude,
-          longitude: x.longitude ?? x.Longitude
+        const list = (r?.data ?? []).map((x) => ({
+          displayName: x.displayName,
+          latitude: Number(x.latitude),
+          longitude: Number(x.longitude)
         }));
+
         this.results.set(list);
         this.busy.set(false);
-        if (!list.length) this.err.set('No places found');
+
+        if (!list.length) {
+          this.err.set('No places found. Try a nearby landmark or area.');
+        }
       },
-      error: () => {
-        // Fallback: client-side Nominatim (dev only; prefer API proxy for production)
-        this.http.get<any[]>('https://nominatim.openstreetmap.org/search', {
-          params: {
-            q: this.query.trim(),
-            format: 'json',
-            limit: '6',
-            countrycodes: 'pk'
-          },
-          headers: { 'Accept-Language': 'en' }
-        }).subscribe({
-          next: (items) => {
-            this.results.set((items || []).map(i => ({
-              displayName: i.display_name,
-              latitude: parseFloat(i.lat),
-              longitude: parseFloat(i.lon)
-            })));
-            this.busy.set(false);
-          },
-          error: () => {
-            this.busy.set(false);
-            this.err.set('Place search failed');
-          }
-        });
+      error: (e) => {
+        console.error('Place search failed:', e);
+        this.busy.set(false);
+        this.err.set('Place search failed. Please try again.');
       }
     });
   }

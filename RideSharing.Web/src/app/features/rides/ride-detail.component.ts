@@ -1,4 +1,3 @@
-
 import {
   Component,
   OnInit,
@@ -106,8 +105,6 @@ import {
         </header>
 
 
-        <!-- REALTIME NOTIFICATION -->
-
         @if (realtimeMessage()) {
 
           <div class="realtime-alert">
@@ -142,8 +139,6 @@ import {
         }
 
 
-        <!-- PROGRESS -->
-
         <section class="progress card">
 
           <p class="label">
@@ -169,8 +164,6 @@ import {
 
         </section>
 
-
-        <!-- DETAILS -->
 
         <div class="grid">
 
@@ -239,8 +232,6 @@ import {
         </div>
 
 
-        <!-- ACTIONS -->
-
         <section class="card actions-card">
 
           <h3>
@@ -276,7 +267,8 @@ import {
 
             <a
               class="btn ghost"
-              [routerLink]="['/app/chat', ride()!.id]">
+              [routerLink]="['/app/chat']"
+              [queryParams]="{ rideId: ride()!.id }">
 
               Commuter Chat
 
@@ -388,8 +380,6 @@ import {
 
         </section>
 
-
-        <!-- RATING -->
 
         @if (isCompleted()) {
 
@@ -819,11 +809,6 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     }
   ];
 
-
-  // =========================================================
-  // INIT
-  // =========================================================
-
   ngOnInit(): void {
 
     const id =
@@ -834,105 +819,48 @@ export class RideDetailComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // Load current ride normally.
     this.reload(id);
-
-    // Start realtime SignalR connection.
     this.startRealtime(id);
   }
-
-
-  // =========================================================
-  // DESTROY
-  // =========================================================
 
   ngOnDestroy(): void {
 
     if (this.realtimeTimer) {
-
-      clearTimeout(
-        this.realtimeTimer
-      );
-
+      clearTimeout(this.realtimeTimer);
       this.realtimeTimer = null;
     }
 
     this.stopRealtime();
   }
 
-
-  // =========================================================
-  // LOAD RIDE
-  // =========================================================
-
   reload(id: string): void {
 
     this.http
-      .get<any>(
-        `${this.api}/rides/${id}`
-      )
+      .get<any>(`${this.api}/rides/${id}`)
       .subscribe({
 
         next: (r) => {
-
-          this.ride.set(
-            r?.data ?? r
-          );
-
+          this.ride.set(r?.data ?? r);
           this.loading.set(false);
         },
 
         error: (e) => {
-
           this.err.set(
-            e.error?.message ||
-            'Failed to load ride'
+            e.error?.message || 'Failed to load ride'
           );
-
           this.loading.set(false);
         }
 
       });
   }
 
-
-  // =========================================================
-  // SIGNALR HUB URL
-  // =========================================================
-
   private getHubUrl(): string {
 
-    /*
-     * environment.signalRUrl:
-     *
-     * /hubs
-     *
-     * Backend:
-     *
-     * /hubs/ride
-     *
-     * Therefore:
-     *
-     * /hubs/ride
-     *
-     * Angular proxy will forward it to:
-     *
-     * http://192.168.10.8:5245/hubs/ride
-     */
-
     const base =
-      (
-        environment.signalRUrl ||
-        '/hubs'
-      ).replace(/\/$/, '');
+      (environment.signalRUrl || '/hubs').replace(/\/$/, '');
 
     return `${base}/ride`;
   }
-
-
-  // =========================================================
-  // GET AUTH TOKEN
-  // =========================================================
 
   private getAccessToken(): string {
 
@@ -940,28 +868,19 @@ export class RideDetailComponent implements OnInit, OnDestroy {
 
     try {
 
-      if (
-        typeof auth.getToken === 'function'
-      ) {
-
-        const token =
-          auth.getToken();
-
-        if (token) {
-          return token;
-        }
+      if (typeof auth.getAccessToken === 'function') {
+        const token = auth.getAccessToken();
+        if (token) return token;
       }
 
-      if (
-        typeof auth.token === 'function'
-      ) {
+      if (typeof auth.getToken === 'function') {
+        const token = auth.getToken();
+        if (token) return token;
+      }
 
-        const token =
-          auth.token();
-
-        if (token) {
-          return token;
-        }
+      if (typeof auth.token === 'function') {
+        const token = auth.token();
+        if (token) return token;
       }
 
       if (auth.token) {
@@ -969,17 +888,8 @@ export class RideDetailComponent implements OnInit, OnDestroy {
       }
 
     } catch {
-
-      // Continue to localStorage fallback.
+      // localStorage fallback
     }
-
-
-    /*
-     * Fallback token keys.
-     *
-     * If AuthService provides the token,
-     * that token is preferred.
-     */
 
     return (
       localStorage.getItem('access_token') ||
@@ -989,225 +899,82 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     );
   }
 
-
-  // =========================================================
-  // START SIGNALR
-  // =========================================================
-
-  private async startRealtime(
-    rideId: string
-  ): Promise<void> {
+  private async startRealtime(rideId: string): Promise<void> {
 
     try {
 
-      const token =
-        this.getAccessToken();
+      const token = this.getAccessToken();
 
       if (!token) {
-
-        console.warn(
-          '[RideRealtime] No access token found.'
-        );
-
+        console.warn('[RideRealtime] No access token found.');
         return;
       }
 
+      const hubUrl = this.getHubUrl();
 
-      const hubUrl =
-        this.getHubUrl();
-
-      console.log(
-        '[RideRealtime] Connecting to:',
-        hubUrl
-      );
-
+      console.log('[RideRealtime] Connecting to:', hubUrl);
 
       this.hubConnection =
         new HubConnectionBuilder()
-
-          .withUrl(
-            hubUrl,
-            {
-              accessTokenFactory: () =>
-                this.getAccessToken()
-            }
-          )
-
-          .withAutomaticReconnect([
-            0,
-            2000,
-            5000,
-            10000
-          ])
-
-          .configureLogging(
-            LogLevel.Information
-          )
-
+          .withUrl(hubUrl, {
+            accessTokenFactory: () => this.getAccessToken()
+          })
+          .withAutomaticReconnect([0, 2000, 5000, 10000])
+          .configureLogging(LogLevel.Information)
           .build();
-
-
-      // =====================================================
-      // RIDE STATUS EVENT
-      // =====================================================
 
       this.hubConnection.on(
         'ReceiveRideStatus',
         (event: any) => {
-
-          console.log(
-            '[RideRealtime] ReceiveRideStatus:',
-            event
-          );
-
-          this.handleRideStatusEvent(
-            event,
-            rideId
-          );
+          console.log('[RideRealtime] ReceiveRideStatus:', event);
+          this.handleRideStatusEvent(event, rideId);
         }
       );
-
-
-      // =====================================================
-      // NOTIFICATION EVENT
-      // =====================================================
 
       this.hubConnection.on(
         'ReceiveNotification',
         (event: any) => {
-
-          console.log(
-            '[RideRealtime] ReceiveNotification:',
-            event
-          );
-
-          this.handleNotificationEvent(
-            event,
-            rideId
-          );
+          console.log('[RideRealtime] ReceiveNotification:', event);
+          this.handleNotificationEvent(event, rideId);
         }
       );
 
+      this.hubConnection.onreconnecting((error) => {
+        console.warn('[RideRealtime] Reconnecting...', error);
+        this.realtimeConnected.set(false);
+      });
 
-      // =====================================================
-      // RECONNECTING
-      // =====================================================
-
-      this.hubConnection.onreconnecting(
-        (error) => {
-
-          console.warn(
-            '[RideRealtime] Reconnecting...',
-            error
-          );
-
-          this.realtimeConnected.set(false);
+      this.hubConnection.onreconnected(async () => {
+        console.log('[RideRealtime] Reconnected');
+        this.realtimeConnected.set(true);
+        try {
+          await this.hubConnection?.invoke('JoinRide', rideId);
+          console.log('[RideRealtime] Ride joined again:', rideId);
+        } catch (error) {
+          console.error('[RideRealtime] Failed to rejoin ride:', error);
         }
-      );
+      });
 
-
-      // =====================================================
-      // RECONNECTED
-      // =====================================================
-
-      this.hubConnection.onreconnected(
-        async () => {
-
-          console.log(
-            '[RideRealtime] Reconnected'
-          );
-
-          this.realtimeConnected.set(true);
-
-          try {
-
-            await this.hubConnection?.invoke(
-              'JoinRide',
-              rideId
-            );
-
-            console.log(
-              '[RideRealtime] Ride joined again:',
-              rideId
-            );
-
-          } catch (error) {
-
-            console.error(
-              '[RideRealtime] Failed to rejoin ride:',
-              error
-            );
-          }
-        }
-      );
-
-
-      // =====================================================
-      // CLOSED
-      // =====================================================
-
-      this.hubConnection.onclose(
-        (error) => {
-
-          console.warn(
-            '[RideRealtime] Connection closed:',
-            error
-          );
-
-          this.realtimeConnected.set(false);
-        }
-      );
-
-
-      // =====================================================
-      // CONNECT
-      // =====================================================
+      this.hubConnection.onclose((error) => {
+        console.warn('[RideRealtime] Connection closed:', error);
+        this.realtimeConnected.set(false);
+      });
 
       await this.hubConnection.start();
 
-      console.log(
-        '[RideRealtime] Connected successfully'
-      );
-
+      console.log('[RideRealtime] Connected successfully');
       this.realtimeConnected.set(true);
 
+      await this.hubConnection.invoke('JoinRide', rideId);
 
-      // =====================================================
-      // JOIN RIDE GROUP
-      // =====================================================
-
-      await this.hubConnection.invoke(
-        'JoinRide',
-        rideId
-      );
-
-      console.log(
-        '[RideRealtime] Joined ride:',
-        rideId
-      );
+      console.log('[RideRealtime] Joined ride:', rideId);
 
     } catch (error) {
 
       this.realtimeConnected.set(false);
-
-      console.error(
-        '[RideRealtime] Connection failed:',
-        error
-      );
-
-      /*
-       * SignalR failure must not break
-       * normal ride page functionality.
-       *
-       * HTTP still works.
-       */
+      console.error('[RideRealtime] Connection failed:', error);
     }
   }
-
-
-  // =========================================================
-  // STOP SIGNALR
-  // =========================================================
 
   private async stopRealtime(): Promise<void> {
 
@@ -1217,26 +984,15 @@ export class RideDetailComponent implements OnInit, OnDestroy {
 
     try {
 
-      if (
-        this.hubConnection.state ===
-        HubConnectionState.Connected
-      ) {
+      if (this.hubConnection.state === HubConnectionState.Connected) {
 
-        const id =
-          this.ride()?.id;
+        const id = this.ride()?.id;
 
         if (id) {
-
           try {
-
-            await this.hubConnection.invoke(
-              'LeaveRide',
-              String(id)
-            );
-
+            await this.hubConnection.invoke('LeaveRide', String(id));
           } catch {
-
-            // Ignore cleanup errors.
+            // ignore
           }
         }
       }
@@ -1245,23 +1001,14 @@ export class RideDetailComponent implements OnInit, OnDestroy {
 
     } catch (error) {
 
-      console.warn(
-        '[RideRealtime] Stop error:',
-        error
-      );
+      console.warn('[RideRealtime] Stop error:', error);
 
     } finally {
 
       this.hubConnection = null;
-
       this.realtimeConnected.set(false);
     }
   }
-
-
-  // =========================================================
-  // RECEIVE RIDE STATUS
-  // =========================================================
 
   private handleRideStatusEvent(
     event: any,
@@ -1272,89 +1019,45 @@ export class RideDetailComponent implements OnInit, OnDestroy {
       return;
     }
 
-
-    const eventRideId =
-      String(
-        event.rideId ??
-        event.RideId ??
-        ''
-      );
-
-
-    // Ignore events belonging to another ride.
+    const eventRideId = String(
+      event.rideId ?? event.RideId ?? ''
+    );
 
     if (
       eventRideId &&
       eventRideId.toLowerCase() !==
-      String(currentRideId).toLowerCase()
+        String(currentRideId).toLowerCase()
     ) {
-
       return;
     }
 
-
-    const status =
-      String(
-        event.status ??
-        event.Status ??
-        ''
-      );
-
-
-    const message =
-      String(
-        event.message ??
-        event.Message ??
-        'Ride status updated'
-      );
-
-
-    console.log(
-      '[RideRealtime] Status changed:',
-      status,
-      message
+    const status = String(
+      event.status ?? event.Status ?? ''
     );
 
+    const message = String(
+      event.message ?? event.Message ?? 'Ride status updated'
+    );
 
-    // =======================================================
-    // UPDATE UI IMMEDIATELY
-    // =======================================================
+    console.log('[RideRealtime] Status changed:', status, message);
 
-    const current =
-      this.ride();
+    const current = this.ride();
 
-    if (current) {
-
+    if (current && status) {
       this.ride.set({
         ...current,
         status
       });
     }
 
-
-    // =======================================================
-    // SHOW ALERT
-    // =======================================================
-
-    this.realtimeTitle.set(
-      this.statusTitle(status)
-    );
-
-    this.showRealtimeMessage(
-      message
-    );
-
-
-    // Normal success message.
-
+    this.realtimeTitle.set(this.statusTitle(status));
+    this.showRealtimeMessage(message);
     this.msg.set(message);
     this.err.set('');
+
+    // Always re-fetch so progress steps match DB without browser refresh
+    this.reload(String(currentRideId));
   }
-
-
-  // =========================================================
-  // RECEIVE NOTIFICATION
-  // =========================================================
 
   private handleNotificationEvent(
     event: any,
@@ -1365,112 +1068,61 @@ export class RideDetailComponent implements OnInit, OnDestroy {
       return;
     }
 
-
-    const eventRideId =
-      String(
-        event.rideId ??
-        event.RideId ??
-        ''
-      );
-
+    const eventRideId = String(
+      event.rideId ?? event.RideId ?? ''
+    );
 
     if (
       eventRideId &&
       eventRideId.toLowerCase() !==
-      String(currentRideId).toLowerCase()
+        String(currentRideId).toLowerCase()
     ) {
-
       return;
     }
 
-
-    const title =
-      String(
-        event.title ??
-        event.Title ??
-        'Ride update'
-      );
-
-
-    const message =
-      String(
-        event.message ??
-        event.Message ??
-        ''
-      );
-
-
-    if (message) {
-
-      this.realtimeTitle.set(title);
-
-      this.showRealtimeMessage(
-        message
-      );
-    }
-  }
-
-
-  // =========================================================
-  // REALTIME ALERT
-  // =========================================================
-
-  private showRealtimeMessage(
-    message: string
-  ): void {
-
-    this.realtimeMessage.set(
-      message
+    const title = String(
+      event.title ?? event.Title ?? 'Ride update'
     );
 
+    const message = String(
+      event.message ?? event.Message ?? ''
+    );
 
-    if (this.realtimeTimer) {
-
-      clearTimeout(
-        this.realtimeTimer
-      );
+    if (message) {
+      this.realtimeTitle.set(title);
+      this.showRealtimeMessage(message);
     }
 
-
-    this.realtimeTimer =
-      setTimeout(() => {
-
-        this.realtimeMessage.set('');
-
-        this.realtimeTimer = null;
-
-      }, 7000);
+    this.reload(String(currentRideId));
   }
 
+  private showRealtimeMessage(message: string): void {
+
+    this.realtimeMessage.set(message);
+
+    if (this.realtimeTimer) {
+      clearTimeout(this.realtimeTimer);
+    }
+
+    this.realtimeTimer = setTimeout(() => {
+      this.realtimeMessage.set('');
+      this.realtimeTimer = null;
+    }, 7000);
+  }
 
   clearRealtimeMessage(): void {
 
     if (this.realtimeTimer) {
-
-      clearTimeout(
-        this.realtimeTimer
-      );
-
+      clearTimeout(this.realtimeTimer);
       this.realtimeTimer = null;
     }
 
     this.realtimeMessage.set('');
   }
 
+  private statusTitle(status: string): string {
 
-  // =========================================================
-  // STATUS TITLE
-  // =========================================================
-
-  private statusTitle(
-    status: string
-  ): string {
-
-    const normalized =
-      status
-        .toLowerCase()
-        .replace(/\s/g, '');
-
+    const normalized = status.toLowerCase().replace(/\s/g, '');
 
     switch (normalized) {
 
@@ -1498,349 +1150,185 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     }
   }
 
-
-  // =========================================================
-  // CURRENT STATUS
-  // =========================================================
-
   private status(): string {
 
-    return String(
-      this.ride()?.status || ''
-    )
+    return String(this.ride()?.status || '')
       .toLowerCase()
       .replace(/\s/g, '');
   }
 
-
-  // =========================================================
-  // PROGRESS
-  // =========================================================
-
   stepIndex(): number {
 
-    const s =
-      this.status();
-
+    const s = this.status();
 
     if (s === 'completed') {
       return 3;
     }
 
-
     if (s === 'inprogress') {
       return 2;
     }
-
 
     if (s === 'driverarrived') {
       return 1;
     }
 
-
-    if (
-      s === 'driverarriving' ||
-      s === 'confirmed'
-    ) {
-
+    if (s === 'driverarriving' || s === 'confirmed') {
       return 0;
     }
-
 
     return -1;
   }
 
-
-  // =========================================================
-  // DRIVER CHECK
-  // =========================================================
-
   isDriver(): boolean {
 
-    const r: any =
-      this.ride();
+    const r: any = this.ride();
+    const me = String(this.auth.currentUser()?.id || '');
+    const parts: any[] = r?.participants || [];
 
+    if (me && parts.length) {
 
-    const me =
-      String(
-        this.auth.currentUser()?.id || ''
+      const mine = parts.find(
+        (p) => String(p.userId) === me
       );
 
-
-    const parts: any[] =
-      r?.participants || [];
-
-
-    if (
-      me &&
-      parts.length
-    ) {
-
-      const mine =
-        parts.find(
-          (p) =>
-            String(p.userId) === me
-        );
-
-
       if (mine) {
-
-        return (
-          String(mine.role)
-            .toLowerCase() ===
-          'driver'
-        );
+        return String(mine.role).toLowerCase() === 'driver';
       }
     }
 
-
-    const a: any =
-      this.auth;
-
-
+    const a: any = this.auth;
     const roles =
       a.roles?.() ??
       a.currentUser?.()?.roles ??
       a.user?.()?.roles ??
       [];
 
-
     return roles.includes('Driver');
   }
 
-
-  // =========================================================
-  // ACTION PERMISSIONS
-  // =========================================================
-
   can(action: string): boolean {
 
-    const s =
-      this.status();
-
+    const s = this.status();
 
     if (action === 'cancel') {
-
-      return ![
-        'completed',
-        'cancelled',
-        'canceled'
-      ].includes(s);
+      return !['completed', 'cancelled', 'canceled'].includes(s);
     }
-
 
     if (action === 'confirm') {
-
-      return (
-        s === 'matched' ||
-        s === 'requested'
-      );
+      return s === 'matched' || s === 'requested';
     }
 
-
     if (!this.isDriver()) {
-
       return action === 'confirm';
     }
 
-
     if (action === 'arriving') {
-
       return s === 'confirmed';
     }
 
-
     if (action === 'arrived') {
-
       return s === 'driverarriving';
     }
 
-
     if (action === 'start') {
-
       return s === 'driverarrived';
     }
 
-
     if (action === 'complete') {
-
       return s === 'inprogress';
     }
-
 
     return false;
   }
 
-
-  // =========================================================
-  // COMPLETED
-  // =========================================================
-
   isCompleted(): boolean {
-
-    return (
-      this.status() ===
-      'completed'
-    );
+    return this.status() === 'completed';
   }
-
-
-  // =========================================================
-  // RIDE ACTION
-  // =========================================================
 
   act(action: string): void {
 
-    const id =
-      this.ride()?.id;
-
+    const id = this.ride()?.id;
 
     if (!id) {
       return;
     }
 
-
     const map: Record<string, string> = {
-
       confirm: 'confirm',
-
       cancel: 'cancel',
-
       arriving: 'driver-arriving',
-
       arrived: 'driver-arrived',
-
       start: 'start',
-
       complete: 'complete'
     };
 
-
-    const path =
-      map[action];
-
+    const path = map[action];
 
     if (!path) {
       return;
     }
 
-
     this.busy.set(true);
-
     this.err.set('');
     this.msg.set('');
 
-
     this.http
-      .post<any>(
-        `${this.api}/rides/${id}/${path}`,
-        {}
-      )
+      .post<any>(`${this.api}/rides/${id}/${path}`, {})
       .subscribe({
 
         next: (r) => {
-
           this.busy.set(false);
-
-
-          this.msg.set(
-            r?.message ||
-            'Updated'
-          );
-
-
-          /*
-           * SignalR will update the page
-           * immediately.
-           *
-           * HTTP reload remains as a
-           * safety fallback.
-           */
-
-          this.reload(
-            String(id)
-          );
+          this.msg.set(r?.message || 'Updated');
+          this.reload(String(id));
         },
 
-
         error: (e) => {
-
           this.busy.set(false);
-
           this.err.set(
-            e.error?.message ||
-            'Action failed'
+            e.error?.message || 'Action failed'
           );
         }
 
       });
   }
 
-
-  // =========================================================
-  // RATING
-  // =========================================================
-
   submitRating(): void {
 
-    const id =
-      this.ride()?.id;
-
+    const id = this.ride()?.id;
 
     if (!id) {
       return;
     }
 
-
     this.busy.set(true);
 
-
     this.http
-      .post(
-        `${this.api}/ratings`,
-        {
-          rideId: id,
-          stars: this.rateStars,
-          review:
-            this.rateReview ||
-            undefined
-        }
-      )
+      .post(`${this.api}/ratings`, {
+        rideId: id,
+        stars: this.rateStars,
+        review: this.rateReview || undefined
+      })
       .subscribe({
 
         next: () => {
-
           this.busy.set(false);
-
-          this.msg.set(
-            'Rating submitted'
-          );
+          this.msg.set('Rating submitted');
         },
 
-
         error: (e) => {
-
           this.busy.set(false);
-
           this.err.set(
-            e.error?.message ||
-            'Rating failed'
+            e.error?.message || 'Rating failed'
           );
         }
 
       });
   }
 
-
-  // =========================================================
-  // PIN
-  // =========================================================
-
   pin(): string {
 
-    const r =
-      this.ride();
-
+    const r = this.ride();
 
     return (
       r?.startPin ||
@@ -1850,16 +1338,9 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     );
   }
 
-
-  // =========================================================
-  // SOURCE
-  // =========================================================
-
   src(): string {
 
-    const r =
-      this.ride();
-
+    const r = this.ride();
 
     return (
       r?.sourceAddress ||
@@ -1868,16 +1349,9 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     );
   }
 
-
-  // =========================================================
-  // DESTINATION
-  // =========================================================
-
   dst(): string {
 
-    const r =
-      this.ride();
-
+    const r = this.ride();
 
     return (
       r?.destinationAddress ||
@@ -1886,52 +1360,26 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     );
   }
 
-
-  // =========================================================
-  // SHORT ID
-  // =========================================================
-
-  shortId(
-    id?: string
-  ): string {
+  shortId(id?: string): string {
 
     if (!id) {
       return '—';
     }
 
-
-    return id.length > 10
-      ? id.slice(0, 10)
-      : id;
+    return id.length > 10 ? id.slice(0, 10) : id;
   }
 
+  prettyStatus(s?: string): string {
 
-  // =========================================================
-  // PRETTY STATUS
-  // =========================================================
-
-  prettyStatus(
-    s?: string
-  ): string {
-
-    return String(
-      s || 'Unknown'
-    ).replace(
+    return String(s || 'Unknown').replace(
       /([a-z])([A-Z])/g,
       '$1 $2'
     );
   }
 
-
-  // =========================================================
-  // PEER NAME
-  // =========================================================
-
   peerName(): string {
 
-    const r =
-      this.ride();
-
+    const r = this.ride();
 
     return (
       r?.otherPartyName ||
@@ -1942,16 +1390,9 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     );
   }
 
-
-  // =========================================================
-  // PEER PHONE
-  // =========================================================
-
   peerPhone(): string {
 
-    const r =
-      this.ride();
-
+    const r = this.ride();
 
     return (
       r?.otherPartyPhone ||
@@ -1961,64 +1402,30 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     );
   }
 
-
-  // =========================================================
-  // PEER INITIALS
-  // =========================================================
-
   peerInitials(): string {
 
     return (
       this.peerName()
         .split(/\s+/)
         .slice(0, 2)
-        .map(
-          (s) =>
-            s[0]?.toUpperCase() || ''
-        )
-        .join('') ||
-      'C'
+        .map((s) => s[0]?.toUpperCase() || '')
+        .join('') || 'C'
     );
   }
 
-
-  // =========================================================
-  // VEHICLE
-  // =========================================================
-
   vehicleLabel(): string {
 
-    const r =
-      this.ride();
-
-
-    const v =
-      r?.vehicle;
-
+    const r = this.ride();
+    const v = r?.vehicle;
 
     if (v) {
-
-      return [
-        v.make,
-        v.model,
-        v.registrationNumber
-      ]
+      return [v.make, v.model, v.registrationNumber]
         .filter(Boolean)
         .join(' ');
     }
 
-
-    return (
-      r?.vehicleLabel ||
-      r?.vehicleInfo ||
-      '—'
-    );
+    return r?.vehicleLabel || r?.vehicleInfo || '—';
   }
-
-
-  // =========================================================
-  // FARE
-  // =========================================================
 
   fare(): string {
 
@@ -2027,16 +1434,8 @@ export class RideDetailComponent implements OnInit, OnDestroy {
       this.ride()?.agreedFare ??
       this.ride()?.fareAmount;
 
-
-    return f != null
-      ? String(f)
-      : '—';
+    return f != null ? String(f) : '—';
   }
-
-
-  // =========================================================
-  // PAYMENT
-  // =========================================================
 
   paymentLabel(): string {
 
@@ -2047,4 +1446,3 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     );
   }
 }
-
