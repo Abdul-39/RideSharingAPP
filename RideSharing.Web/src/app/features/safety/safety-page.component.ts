@@ -44,8 +44,13 @@ import { environment } from '../../../environments/environment';
             <small>Only female accounts can enable this. (Disabled for incompatible accounts)</small>
           </span>
         </label>
-        <button type="button" class="btn primary" (click)="savePref()" [disabled]="prefBusy()">Save Preference</button>
+        <button type="button" class="btn primary" (click)="savePref()" [disabled]="prefBusy() || !canWomenOnly()">
+          Save Preference
+        </button>
         @if (prefMsg()) { <p class="ok">{{ prefMsg() }}</p> }
+        @if (!canWomenOnly()) {
+          <p class="muted">Women-only is available only for accounts with gender Female.</p>
+        }
       </section>
 
       <section class="card">
@@ -173,31 +178,39 @@ export class SafetyPageComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadContacts();
+    this.loadSettings();
     this.http.get<any>(`${this.api}/users/me`).subscribe({
       next: (r) => {
         const d = r?.data ?? r;
         this.gender = d?.gender ?? '';
-        this.womenOnly = !!(d?.womenOnlyPreference || d?.womenOnly);
+        if (d?.womenOnlyPreference != null || d?.womenOnly != null) {
+          this.womenOnly = !!(d?.womenOnlyPreference || d?.womenOnly);
+        }
+      },
+      error: () => {}
+    });
+  }
+
+  loadSettings(): void {
+    this.http.get<any>(`${this.api}/safety/settings`).subscribe({
+      next: (r) => {
+        const d = r?.data ?? r;
+        if (d) {
+          this.womenOnly = !!d.womenOnlyPreference;
+          if (d.gender) this.gender = d.gender;
+        }
       },
       error: () => {}
     });
   }
 
   loadContacts(): void {
-    this.http.get<any>(`${this.api}/safety/emergency-contacts`).subscribe({
+    this.http.get<any>(`${this.api}/safety/contacts`).subscribe({
       next: (r) => {
         const d = r?.data ?? r;
         this.contacts.set(Array.isArray(d) ? d : d?.items ?? []);
       },
-      error: () => {
-        this.http.get<any>(`${this.api}/emergency-contacts`).subscribe({
-          next: (r) => {
-            const d = r?.data ?? r;
-            this.contacts.set(Array.isArray(d) ? d : d?.items ?? []);
-          },
-          error: () => {}
-        });
-      }
+      error: () => this.contacts.set([])
     });
   }
 
@@ -216,7 +229,9 @@ export class SafetyPageComponent implements OnInit {
 
   triggerSos(): void {
     if (!confirm('Trigger emergency SOS? This will notify your contacts and system.')) return;
-    this.sosBusy.set(true); this.sosErr.set(''); this.sosMsg.set('');
+    this.sosBusy.set(true);
+    this.sosErr.set('');
+    this.sosMsg.set('');
     navigator.geolocation.getCurrentPosition(
       (pos) => this.postSos(pos.coords.latitude, pos.coords.longitude),
       () => this.postSos(undefined, undefined),
@@ -232,63 +247,59 @@ export class SafetyPageComponent implements OnInit {
         this.sosMsg.set(r?.message || 'SOS alert created');
       },
       error: (e) => {
-        this.http.post<any>(`${this.api}/sos`, body).subscribe({
-          next: (r) => {
-            this.sosBusy.set(false);
-            this.sosMsg.set(r?.message || 'SOS alert created');
-          },
-          error: (e2) => {
-            this.sosBusy.set(false);
-            this.sosErr.set(e2.error?.message || e.error?.message || 'SOS failed');
-          }
-        });
+        this.sosBusy.set(false);
+        this.sosErr.set(e.error?.message || 'SOS failed');
       }
     });
   }
 
   savePref(): void {
-    this.prefBusy.set(true); this.prefMsg.set('');
-    this.http.put<any>(`${this.api}/users/me`, { womenOnlyPreference: this.womenOnly }).subscribe({
-      next: () => {
-        this.prefBusy.set(false);
-        this.prefMsg.set('Preference saved');
-      },
-      error: () => {
-        this.prefBusy.set(false);
-        this.prefMsg.set('Could not save (endpoint optional)');
-      }
-    });
+    if (!this.canWomenOnly() && this.womenOnly) {
+      this.prefMsg.set('Only female accounts can enable women-only matching.');
+      return;
+    }
+    this.prefBusy.set(true);
+    this.prefMsg.set('');
+    this.http
+      .put<any>(`${this.api}/safety/settings`, {
+        womenOnlyPreference: !!this.womenOnly
+      })
+      .subscribe({
+        next: (r) => {
+          this.prefBusy.set(false);
+          this.prefMsg.set(r?.message || 'Preference saved');
+        },
+        error: (e) => {
+          this.prefBusy.set(false);
+          this.prefMsg.set(e.error?.message || 'Could not save preference');
+        }
+      });
   }
 
   addContact(): void {
-    if (!this.newName || !this.newPhone) {
+    if (!this.newName?.trim() || !this.newPhone?.trim()) {
       this.contactErr.set('Name and phone required');
       return;
     }
-    this.contactBusy.set(true); this.contactErr.set('');
+    this.contactBusy.set(true);
+    this.contactErr.set('');
     const body = {
-      name: this.newName,
-      phoneNumber: this.newPhone,
-      relationship: this.newRel,
-      isPrimary: this.newPrimary
+      name: this.newName.trim(),
+      phoneNumber: this.newPhone.trim(),
+      relationship: this.newRel || 'Other',
+      isPrimary: !!this.newPrimary
     };
-    this.http.post<any>(`${this.api}/safety/emergency-contacts`, body).subscribe({
+    this.http.post<any>(`${this.api}/safety/contacts`, body).subscribe({
       next: () => {
         this.contactBusy.set(false);
-        this.newName = ''; this.newPhone = ''; this.newPrimary = false;
+        this.newName = '';
+        this.newPhone = '';
+        this.newPrimary = false;
         this.loadContacts();
       },
       error: (e) => {
-        this.http.post(`${this.api}/emergency-contacts`, body).subscribe({
-          next: () => {
-            this.contactBusy.set(false);
-            this.loadContacts();
-          },
-          error: (e2) => {
-            this.contactBusy.set(false);
-            this.contactErr.set(e2.error?.message || e.error?.message || 'Add failed');
-          }
-        });
+        this.contactBusy.set(false);
+        this.contactErr.set(e.error?.message || e.error?.title || 'Add failed');
       }
     });
   }
@@ -296,14 +307,9 @@ export class SafetyPageComponent implements OnInit {
   removeContact(c: any): void {
     const id = c.id;
     if (!id || !confirm('Remove contact?')) return;
-    this.http.delete(`${this.api}/safety/emergency-contacts/${id}`).subscribe({
+    this.http.delete(`${this.api}/safety/contacts/${id}`).subscribe({
       next: () => this.loadContacts(),
-      error: () => {
-        this.http.delete(`${this.api}/emergency-contacts/${id}`).subscribe({
-          next: () => this.loadContacts(),
-          error: () => {}
-        });
-      }
+      error: () => {}
     });
   }
 }

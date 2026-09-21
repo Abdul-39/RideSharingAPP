@@ -9,8 +9,7 @@ import { environment } from '../../../environments/environment';
 import {
   CommutePlace,
   RAWALPINDI_ISLAMABAD_PLACES,
-  findMatchingTwinCitiesPlaces,
-  findClosestTwinCitiesPlace
+  findMatchingTwinCitiesPlaces
 } from '../../core/constants/places.constants';
 
 interface DayOption {
@@ -1515,61 +1514,53 @@ export class RouteFormComponent implements OnInit {
   detectCurrentLocationForSource(): void {
 
     if (!navigator.geolocation) {
-
-      this.err.set(
-        'Geolocation is not supported by your browser.'
-      );
-
+      this.err.set('Geolocation is not supported by your browser.');
       return;
     }
 
     this.busy.set(true);
+    this.err.set('');
+    this.msg.set('');
 
     navigator.geolocation.getCurrentPosition(
-
       (pos) => {
-
-        const lat =
-          +pos.coords.latitude.toFixed(6);
-
-        const lng =
-          +pos.coords.longitude.toFixed(6);
+        const lat = +pos.coords.latitude.toFixed(6);
+        const lng = +pos.coords.longitude.toFixed(6);
 
         this.sourceLatitude = lat;
         this.sourceLongitude = lng;
 
-        const closest =
-          findClosestTwinCitiesPlace(
-            lat,
-            lng
-          );
+        // Real reverse geocode — do NOT snap to nearest hardcoded place (COMSATS bug)
+        this.http.get<any>(`${this.api}/geo/reverse?lat=${lat}&lng=${lng}`).subscribe({
+          next: (r) => {
+            const name =
+              r?.data?.displayName ||
+              r?.data?.address ||
+              r?.data?.formattedAddress ||
+              r?.displayName ||
+              `${lat}, ${lng}`;
 
-        this.sourceAddress =
-          closest.name;
-
-        this.sourceSearch =
-          closest.name;
-
-        this.busy.set(false);
-
-        this.msg.set(
-          `Location resolved to nearest Twin Cities place: ${closest.name}`
-        );
+            this.sourceAddress = name;
+            this.sourceSearch = name;
+            this.sourceSelectedAddress = name;
+            this.busy.set(false);
+            this.msg.set('Source set from your live GPS');
+          },
+          error: () => {
+            const name = `${lat}, ${lng}`;
+            this.sourceAddress = name;
+            this.sourceSearch = name;
+            this.sourceSelectedAddress = name;
+            this.busy.set(false);
+            this.msg.set('Source set from GPS coordinates');
+          }
+        });
       },
-
       () => {
-
         this.busy.set(false);
-
-        this.err.set(
-          'Unable to retrieve your current location.'
-        );
+        this.err.set('Unable to retrieve your current location.');
       },
-
-      {
-        timeout: 10000,
-        enableHighAccuracy: true
-      }
+      { timeout: 15000, enableHighAccuracy: true, maximumAge: 0 }
     );
   }
 
@@ -1581,6 +1572,8 @@ export class RouteFormComponent implements OnInit {
     }
 
     this.busy.set(true);
+    this.err.set('');
+    this.msg.set('');
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -1590,20 +1583,36 @@ export class RouteFormComponent implements OnInit {
         this.destinationLatitude = lat;
         this.destinationLongitude = lng;
 
-        const closest = findClosestTwinCitiesPlace(lat, lng);
+        this.http.get<any>(`${this.api}/geo/reverse?lat=${lat}&lng=${lng}`).subscribe({
+          next: (r) => {
+            const name =
+              r?.data?.displayName ||
+              r?.data?.address ||
+              r?.data?.formattedAddress ||
+              r?.displayName ||
+              `${lat}, ${lng}`;
 
-        this.destinationAddress = closest.name;
-        this.destinationSearch = closest.name;
-        this.destinationSelectedAddress = closest.name;
-
-        this.busy.set(false);
-        this.msg.set(`Destination resolved to nearest known place: ${closest.name}`);
+            this.destinationAddress = name;
+            this.destinationSearch = name;
+            this.destinationSelectedAddress = name;
+            this.busy.set(false);
+            this.msg.set('Destination set from your live GPS');
+          },
+          error: () => {
+            const name = `${lat}, ${lng}`;
+            this.destinationAddress = name;
+            this.destinationSearch = name;
+            this.destinationSelectedAddress = name;
+            this.busy.set(false);
+            this.msg.set('Destination set from GPS coordinates');
+          }
+        });
       },
       () => {
         this.busy.set(false);
         this.err.set('Unable to retrieve your current location.');
       },
-      { timeout: 10000, enableHighAccuracy: true }
+      { timeout: 15000, enableHighAccuracy: true, maximumAge: 0 }
     );
   }
 

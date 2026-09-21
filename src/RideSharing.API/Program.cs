@@ -203,8 +203,8 @@ try
               "https://localhost:4200",
               "http://localhost:8100",
               "https://localhost:8100",
-              "http://192.168.10.4:4200",
-              "https://192.168.10.4:4200"
+              "http://192.168.10.10:4200",
+              "https://192.168.10.10:4200"
           )
           .AllowAnyHeader()
           .AllowAnyMethod()

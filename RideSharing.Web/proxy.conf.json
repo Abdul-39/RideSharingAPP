@@ -1,12 +1,12 @@
 
 {
   "/api": {
-    "target": "http://192.168.10.4:5245",
+    "target": "http://192.168.10.10:5245",
     "secure": false,
     "changeOrigin": true
   },
   "/hubs": {
-    "target": "http://192.168.10.4:5245",
+    "target": "http://192.168.10.10:5245",
     "secure": false,
     "changeOrigin": true,
     "ws": true
