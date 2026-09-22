@@ -43,9 +43,6 @@ import { environment } from '../../../environments/environment';
           <label class="lbl">License number
             <input class="inp" [(ngModel)]="licenseNumber" name="lic" />
           </label>
-          <label class="lbl">Years of experience
-            <input class="inp" type="number" min="0" [(ngModel)]="yearsOfExperience" name="yrs" />
-          </label>
         </div>
         <label class="lbl">Notes (optional)
           <input class="inp" [(ngModel)]="notes" name="notes" placeholder="Preferred corridors, vehicle hints…" />

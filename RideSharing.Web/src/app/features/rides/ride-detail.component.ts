@@ -800,7 +800,7 @@ export class RideDetailComponent implements OnInit, OnDestroy {
     {
       i: 2,
       key: 'progress',
-      label: 'In Progress (PIN)'
+      label: 'In Progress'
     },
     {
       i: 3,
