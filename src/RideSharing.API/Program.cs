@@ -76,13 +76,11 @@ try
           {
             var accessToken = context.Request.Query["access_token"];
             var path = context.HttpContext.Request.Path;
-
             if (!string.IsNullOrEmpty(accessToken) &&
                   path.StartsWithSegments("/hubs"))
             {
               context.Token = accessToken;
             }
-
             return Task.CompletedTask;
           }
         };
@@ -117,7 +115,6 @@ try
       builder.Configuration.GetSection("Matching"));
   builder.Services.AddScoped<IRideMatchingService, CorridorRideMatchingService>();
   builder.Services.AddScoped<IMatchingService, CorridorMatchingAdapter>();
-
   builder.Services.AddScoped<IRideRequestService, RideRequestService>();
   builder.Services.AddScoped<IRideService, RideService>();
   builder.Services.AddScoped<IRideRealtimeNotifier, RideRealtimeNotifier>();
@@ -128,9 +125,15 @@ try
       builder.Configuration.GetSection("FareSettings"));
   builder.Services.AddScoped<IFareCalculator, FareCalculator>();
   builder.Services.AddScoped<IWalletService, WalletService>();
+
+  // ========== PAYMENTS (Cash + MockWallet + JazzCash/EasyPaisa OTP simulation) ==========
+  builder.Services.AddSingleton<PaymentOtpStore>();
   builder.Services.AddScoped<IPaymentProvider, CashPaymentProvider>();
   builder.Services.AddScoped<IPaymentProvider, MockWalletPaymentProvider>();
+  builder.Services.AddScoped<IPaymentProvider, JazzCashPaymentProvider>();
+  builder.Services.AddScoped<IPaymentProvider, EasyPaisaPaymentProvider>();
   builder.Services.AddScoped<IPaymentService, PaymentService>();
+
   builder.Services.AddScoped<IRatingService, RatingService>();
   builder.Services.AddScoped<ISafetyService, SafetyService>();
   builder.Services.AddScoped<IVerificationService, VerificationService>();
@@ -167,7 +170,7 @@ try
       Version = "v1",
       Description =
             "Real-time ride-sharing for daily repeat-route commuters in Pakistan. " +
-            "Phase 14 – Admin Dashboard + corridor matching."
+            "Phase 14 – Admin Dashboard + corridor matching + payments."
     });
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -203,8 +206,8 @@ try
               "https://localhost:4200",
               "http://localhost:8100",
               "https://localhost:8100",
-              "http://192.168.10.16:4200",
-              "https://192.168.10.16:4200"
+              "http:// 192.168.10.17:4200",
+              "https:// 192.168.10.17:4200"
           )
           .AllowAnyHeader()
           .AllowAnyMethod()
@@ -234,7 +237,7 @@ try
   app.MapHub<RideHub>("/hubs/ride");
   app.MapHealthChecks("/health");
 
-  Log.Information("RideSharing API is ready (corridor matching wired).");
+  Log.Information("RideSharing API is ready (corridor matching + payments wired).");
   app.Run();
 }
 catch (Exception ex)
